@@ -865,7 +865,16 @@ class Backup:
                 # Toybox ln creates the destination directory entry atomically
                 # and fails if the target appeared after preflight. `mv -n`
                 # has a stat/rename race and is not suitable for this case.
-                _run_android_command(android, ["ln", "-T", temporary, target])
+                try:
+                    _run_android_command(android, ["ln", "-T", temporary, target])
+                except BrokenPipeError as exc:
+                    reason = str(exc).lower().rsplit(": ", 1)[-1]
+                    if reason in ("permission denied", "operation not permitted"):
+                        raise BackupError(
+                            "Android refused the hard-link step required for a no-overwrite phone restore. "
+                            "Confirm the destination does not exist, then retry with --overwrite: {}".format(target)
+                        ) from exc
+                    raise
             final_stat = android.lstat(target)
             if not stat.S_ISREG(final_stat.st_mode) or final_stat.st_size != size:
                 raise BackupError("Restored Android file failed size verification")

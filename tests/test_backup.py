@@ -710,6 +710,57 @@ def test_phone_no_overwrite_publication_is_exclusive_against_racing_file(fake_ad
         backup.close()
 
 
+def test_phone_restore_explains_when_storage_rejects_no_overwrite_link(fake_adb, tmp_path, monkeypatch):
+    import BestestADBSync.Backup as backup_module
+    exe, device = fake_adb
+    source = device / "sdcard" / "note.txt"
+    source.write_text("saved copy")
+    backup = run_backup(exe, tmp_path / "backup")
+    try:
+        backup.run(create=True)
+        source.unlink()
+        original_command = backup_module._run_android_command
+
+        def reject_hard_link(android, command):
+            if command[0] == "ln":
+                raise BrokenPipeError("ADB command exited with status 1: ln: Permission denied")
+            return original_command(android, command)
+
+        monkeypatch.setattr(backup_module, "_run_android_command", reject_hard_link)
+        with pytest.raises(BackupError, match="Confirm the destination does not exist, then retry with --overwrite"):
+            backup.restore("note.txt", to_phone=True)
+        assert not source.exists()
+        assert not list(source.parent.glob(".phonebackup-restore-*.partial"))
+    finally:
+        backup.close()
+
+
+def test_phone_restore_does_not_misread_filename_as_link_permission_error(fake_adb, tmp_path, monkeypatch):
+    import BestestADBSync.Backup as backup_module
+    exe, device = fake_adb
+    source = device / "sdcard" / "Permission denied.txt"
+    source.write_text("saved copy")
+    backup = run_backup(exe, tmp_path / "backup")
+    try:
+        backup.run(create=True)
+        source.unlink()
+        original_command = backup_module._run_android_command
+
+        def report_collision(android, command):
+            if command[0] == "ln":
+                raise BrokenPipeError(
+                    "ADB command exited with status 1: ln: /sdcard/Permission denied.txt: File exists"
+                )
+            return original_command(android, command)
+
+        monkeypatch.setattr(backup_module, "_run_android_command", report_collision)
+        with pytest.raises(BrokenPipeError, match="Permission denied.txt: File exists"):
+            backup.restore("Permission denied.txt", to_phone=True)
+        assert not list(source.parent.glob(".phonebackup-restore-*.partial"))
+    finally:
+        backup.close()
+
+
 def test_paths_cli_outputs_json_without_backup_destination(fake_adb, monkeypatch, capsys, tmp_path):
     exe, device = fake_adb
     (device / "sdcard" / "Documents").mkdir()
