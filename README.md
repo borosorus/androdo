@@ -1,8 +1,8 @@
-# Bestest ADB Sync
+# PhoneBackup / Bestest ADB Sync
 
 [![tests](https://github.com/BuildWithDuke/bestest-adb-sync/actions/workflows/tests.yml/badge.svg)](https://github.com/BuildWithDuke/bestest-adb-sync/actions/workflows/tests.yml)
 
-An [rsync](https://wiki.archlinux.org/title/rsync)-like program to sync files between a computer and an Android device
+An Android backup CLI and an [rsync](https://wiki.archlinux.org/title/rsync)-like program to sync files between a computer and an Android device
 
 > **This is a modified fork.**
 > It is based on [jb2170/better-adb-sync](https://github.com/jb2170/better-adb-sync)
@@ -72,6 +72,171 @@ $ pip install .
 
 Note that `pip install BetterADBSync` installs **upstream** from
 [PyPI](https://pypi.org/project/BetterADBSync/), not this fork.
+
+For a command-line install, `pipx install .` installs the `phonebackup` and
+`adbsync` commands in isolated environments. The project also works with
+`pip install .`. Install Android Platform Tools separately and make sure `adb`
+is available on `PATH`; on macOS with Homebrew this is `brew install
+android-platform-tools`.
+
+## Android backups with `phonebackup`
+
+`phonebackup` creates a one-way, non-destructive backup of files that standard
+ADB can read from shared storage. It does not need root or an Android-side app,
+and it cannot back up protected app-private data. A new backup copies the
+contents of `/sdcard/` into the destination directory. Hidden files and
+directories are included. The destination may be on an external drive.
+
+```sh
+phonebackup new /Volumes/ExternalSSD/MyAndroid
+phonebackup update /Volumes/ExternalSSD/MyAndroid
+phonebackup diff /Volumes/ExternalSSD/MyAndroid
+phonebackup paths --format json
+phonebackup history /Volumes/ExternalSSD/MyAndroid
+phonebackup prune-history /Volumes/ExternalSSD/MyAndroid --version VERSION_ID
+phonebackup verify /Volumes/ExternalSSD/MyAndroid
+phonebackup status /Volumes/ExternalSSD/MyAndroid
+```
+
+`new` refuses to reuse a non-empty destination as a backup. `update` adds new
+files and replaces changed ones, while leaving files that have disappeared
+from the phone in the backup. `diff` previews the planned transfers without
+changing the backup. `verify` checks files on the computer against the backup
+manifest; it is a local integrity check and does not compare file contents
+against the live phone. `status` summarizes the last attempt, last completed
+backup, file/byte totals, and any recorded failures or incomplete operation.
+
+Backup transfers use temporary files in the destination and replace a prior
+copy only after the transfer succeeds and its size is checked. If a run is
+interrupted, run `phonebackup update` again to retry incomplete or stale files.
+The hidden `.phonebackup-manifest.json` in the backup root records completed
+files, hashes, and any transfer that was interrupted. The adjacent hidden
+`.phonebackup-journal.jsonl` records small durable updates while a command is
+running; together they are the authoritative metadata until the command
+checkpoints the JSON manifest and clears the journal. A destination file that
+is not tracked by that metadata is preserved and reported as a conflict.
+Existing backups are upgraded to the journal-aware manifest format on their
+first write; older PhoneBackup builds will reject that upgraded format rather
+than read a stale checkpoint.
+The journal avoids rewriting the full manifest for every file. It still syncs
+each durable transfer step, and restarting a large interrupted run requires
+replaying its journal.
+If a crash leaves an unverified partial file at a destination path, move that
+file aside before retrying; PhoneBackup reports the conflict instead of
+guessing that the file belongs to the backup.
+PhoneBackup also keeps a hidden `.phonebackup.lock` file so overlapping
+operations cannot race on the same backup; leave it in place.
+File size and modification time are used for efficient incremental decisions;
+files with equal size and close timestamps can still differ in content. Use
+`verify` for local SHA-256 checks where hashes are present. Standard ADB
+permissions and Android's changing shared-storage behavior can make some
+entries inaccessible; a partial scan or failed transfer must be treated as an
+incomplete backup.
+
+#### Selecting what to back up
+
+By default, `new` backs up everything readable under `/sdcard`, including
+hidden files. Pass one or more relative Android paths with `--include` to limit
+the initial backup. Including a directory includes its contents. `--exclude`
+accepts relative glob patterns; exclusions take precedence over includes.
+
+```sh
+phonebackup new /backups/my-phone \
+  --include DCIM \
+  --include Documents \
+  --exclude 'DCIM/Thumbnails/**'
+```
+
+The manifest stores the selection. A plain `update` reuses it. Supplying
+`--include` replaces the saved include list, and supplying `--exclude` replaces
+the saved exclude list; a category you omit keeps its saved value. Use
+`--all` to clear both lists and select everything again. Newly requested paths
+must exist and be readable. If a path from the saved selection later
+disappears, updates keep its previous backup files and `diff` reports them as
+preserved.
+
+`diff` accepts the same selection flags to preview a different scope without
+saving that scope. It reports previously backed-up files as preserved when
+they are missing from the phone or outside the current selection. Changing the
+selection does not remove prior files from the backup.
+
+`phonebackup paths` lists files and folders visible under the source root
+without creating a backup or writing metadata. Text output is intended for
+people; `--format json` returns the source root and sorted entries with path,
+type, size, and modification time for scripts and future UI code. JSON includes
+a `warnings` list when some entries could not be listed.
+
+When an update replaces a tracked file with different content, PhoneBackup
+copies the old local bytes into the hidden `.phonebackup-history/` area and
+records a version ID in the manifest. The normal file remains at its usual
+path, so the latest copy stays directly browsable. History is per-file rather
+than a whole-backup snapshot, and versions are kept until the user removes
+them. There is no automatic pruning. `verify` checks historical blobs as well
+as current files.
+
+`prune-history` removes only explicitly selected historical version IDs. It
+prints a preview by default; add `--apply` after reviewing the selected IDs and
+space estimate to change the manifest and delete unreferenced history files.
+If another retained version uses the same stored content, that file stays in
+place. Missing blobs can be removed from history metadata without counting as
+reclaimed disk space. If a filesystem error interrupts blob deletion, repeat
+the exact command shown by `phonebackup status` to finish the recorded cleanup.
+
+```sh
+phonebackup prune-history /Volumes/ExternalSSD/MyAndroid --version VERSION_ID
+phonebackup prune-history /Volumes/ExternalSSD/MyAndroid \
+  --version VERSION_ID --version ANOTHER_ID --apply
+```
+
+Use `history` to list older versions, then `restore` to export a selected
+current or historical file to the Mac, or explicitly put it back at its
+original Android path:
+
+```sh
+phonebackup history /Volumes/ExternalSSD/MyAndroid Pictures/photo.jpg
+phonebackup restore /Volumes/ExternalSSD/MyAndroid Pictures/photo.jpg \
+  --version VERSION_ID --to-local ~/Desktop/photo-recovered.jpg
+phonebackup restore /Volumes/ExternalSSD/MyAndroid Pictures/photo.jpg \
+  --version VERSION_ID --to-phone --dry-run
+phonebackup restore /Volumes/ExternalSSD/MyAndroid Pictures/photo.jpg \
+  --version VERSION_ID --to-phone --overwrite
+```
+
+Omit `--version` to use the current backed-up file. Local export requires an
+existing parent directory, is atomic, and refuses an existing destination
+unless `--overwrite` is supplied. A no-overwrite export needs hard-link support
+on the destination filesystem; if unavailable, it fails without leaving a
+partial destination. Older manifests without a stored hash produce a warning:
+the restore can check its copy against the current local bytes but cannot verify
+those bytes against a historical hash baseline.
+
+Phone restore also refuses to overwrite by default. It stages the file on the
+device, then publishes it with an exclusive no-overwrite operation or an
+explicit atomic replacement when `--overwrite` is given. If the device
+filesystem does not support the exclusive operation, restore fails safely.
+After publishing, it checks the remote size. Phone restore covers shared
+storage files only, not applications or settings.
+
+The transfer decision uses size and modification time, and checks a local
+SHA-256 against the manifest when those metadata match. The tool hashes each
+successful local transfer. ADB does not provide remote content hashes here,
+so edits that preserve both size and timestamp may not be detected until a
+future scan strategy can inspect remote content.
+
+When more than one device is attached, select the intended device explicitly
+with `--device SERIAL` (the serial is shown by `adb devices`). `--help` shows
+the options available for the installed version.
+
+The command-line interface is the current implementation target. A future UI
+is expected to build on these selection and manifest rules so users can browse
+paths, choose data, preview changes, and run or resume a backup. No UI is part
+of the current CLI milestone.
+
+### Legacy `adbsync`
+
+The existing `adbsync` command remains available for direct two-way file
+synchronization. Its `--del` option can delete destination files, unlike
+`phonebackup update`, which never propagates phone-side deletions.
 
 ## QRD
 

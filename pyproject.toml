@@ -1,7 +1,7 @@
 [project]
-name = "BestestADBSync"
+name = "phonebackup"
 dynamic = ["version"]
-description = "Better version of adb-sync for Python3"
+description = "Non-destructive Android file backups over ADB"
 readme = "README.md"
 license = {file = "LICENSE"}
 
@@ -11,13 +11,14 @@ requires-python = ">=3.8"
 dev = ["pytest>=7.0"]
 
 [project.urls]
-Homepage = "https://github.com/jb2170/better-adb-sync/"
+Homepage = "https://github.com/BuildWithDuke/bestest-adb-sync/"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [project.scripts]
 adbsync = "BestestADBSync:main"
+phonebackup = "BestestADBSync:backup_main"
 
 [tool.setuptools.dynamic]
 version = {attr = "BestestADBSync.__version__"}

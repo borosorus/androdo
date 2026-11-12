@@ -34,6 +34,11 @@ class FileSystem():
         if stat.S_ISLNK(tree_path_stat.st_mode):
             if not follow_links:
                 logging.warning(f"Ignoring symlink {tree_path}")
+                if hasattr(self, "scan_errors"):
+                    if hasattr(self, "record_scan_error"):
+                        self.record_scan_error("symlink is not backed up: {}".format(tree_path), tree_path)
+                    else:
+                        self.scan_errors.append("symlink is not backed up: {}".format(tree_path))
                 return None
             logging.debug(f"Following symlink {tree_path}")
             try:
@@ -57,6 +62,11 @@ class FileSystem():
             return FileMeta(int(tree_path_stat.st_atime), int(tree_path_stat.st_mtime), tree_path_stat.st_size)
         else:
             logging.warning(f"Ignoring special file {tree_path}")
+            if hasattr(self, "scan_errors"):
+                if hasattr(self, "record_scan_error"):
+                    self.record_scan_error("special file is not backed up: {}".format(tree_path), tree_path)
+                else:
+                    self.scan_errors.append("special file is not backed up: {}".format(tree_path))
             return None
 
     def get_files_tree(self, tree_path: str, follow_links: bool = False):

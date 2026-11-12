@@ -97,6 +97,9 @@ class AndroidFileSystem(FileSystem):
         self.adb_encoding = adb_encoding
         # None until probed; see supports_find_printf
         self._find_printf_supported: Optional[bool] = None
+        # Backup callers must be able to reject scans with permission or I/O
+        # failures instead of treating a partial tree as complete.
+        self.scan_errors: List[str] = []
         # bound before Popen so __del__ never raises AttributeError if the spawn
         # itself fails, which would otherwise mask the real error (issue #43)
         self.proc_adb_shell = None
@@ -132,28 +135,94 @@ class AndroidFileSystem(FileSystem):
         """
         return data.decode(self.adb_encoding, errors = "surrogateescape")
 
-    def adb_shell_raw(self, commands: List[str]) -> bytes:
+    def record_scan_error(self, message: str, path: Optional[str] = None) -> None:
+        if not hasattr(self, "scan_errors"):
+            self.scan_errors = []
+        self.scan_errors.append(message)
+        if not hasattr(self, "scan_error_paths"):
+            self.scan_error_paths = []
+        self.scan_error_paths.append(path)
+
+    def adb_shell_raw(self, commands: List[str], allow_nonzero_find: bool = False) -> bytes:
         """Run a command and return its raw, undecoded output.
 
         Needed for NUL-separated output, which cannot be read line-wise.
         """
         self.proc_adb_shell.stdin.write(shlex.join(commands).encode(self.adb_encoding, errors = "surrogateescape"))
         self.proc_adb_shell.stdin.write(" </dev/null\n".encode(self.adb_encoding))
-        self.proc_adb_shell.stdin.write(shlex.join(["echo", self.ADBSYNC_END_OF_COMMAND]).encode(self.adb_encoding))
-        self.proc_adb_shell.stdin.write(" </dev/null\n".encode(self.adb_encoding))
+        # Capture the command status in the same shell. Without it, a command
+        # that prints partial output and exits non-zero could look complete.
+        self.proc_adb_shell.stdin.write(
+            ('echo "' + self.ADBSYNC_END_OF_COMMAND + ':$?"\n').encode(self.adb_encoding)
+        )
         self.proc_adb_shell.stdin.flush()
 
         # The marker cannot be matched line-wise: NUL-separated output has no
         # trailing newline, so the final record and the echoed marker arrive as
         # one readline(). Accumulate instead and strip the marker off the end.
-        marker = self.ADBSYNC_END_OF_COMMAND.encode(self.adb_encoding)
+        marker = self.ADBSYNC_END_OF_COMMAND.encode(self.adb_encoding) + b":"
         buffer = bytearray()
+        marker_found = False
+        command_status = None
         while adb_line := self.proc_adb_shell.stdout.readline():
             buffer += adb_line
             trimmed = buffer.rstrip(b"\r\n")
-            if trimmed.endswith(marker):
-                buffer = trimmed[:-len(marker)]
+            match = re.search(re.escape(marker) + rb"([0-9]+)$", trimmed)
+            if match is not None:
+                buffer = trimmed[:match.start()]
+                command_status = int(match.group(1))
+                marker_found = True
                 break
+        if not marker_found:
+            raise BrokenPipeError("ADB shell closed before completing a command")
+        if command_status:
+            diagnostic = self.decode(bytes(buffer)).strip()
+            # Preserve the legacy filesystem API's ENOENT handling: callers
+            # parse a standalone missing-path diagnostic into FileNotFoundError.
+            # Never exempt a partial find stream, even if a filename contains
+            # the same words as an error message.
+            command = commands[0] if commands else ""
+            lines = diagnostic.splitlines()
+            missing_path = len(lines) == 1 and (
+                (command == "find" and command_status == 1 and b"\0" not in buffer and self.RE_FIND_NO_SUCH_FILE.fullmatch(lines[0])) or
+                (command == "ls" and self.RE_NO_SUCH_FILE.fullmatch(lines[0])) or
+                (command == "realpath" and self.RE_REALPATH_NO_SUCH_FILE.fullmatch(lines[0]))
+            )
+            if missing_path:
+                return bytes(buffer)
+            if allow_nonzero_find and command == "find":
+                # Recursive find can report an unreadable child while still
+                # returning useful records. Keep that output so the caller can
+                # ignore diagnostics inside excluded paths. A nonzero exit
+                # without any attributable diagnostic is always fatal.
+                if command_status != 1:
+                    self.record_scan_error(
+                        "find exited with unexpected status {}".format(command_status)
+                    )
+                    return bytes(buffer)
+                has_diagnostic = False
+                for chunk in self.decode(bytes(buffer)).split("\0"):
+                    if not chunk:
+                        continue
+                    if self.RE_FIND_RECORD.fullmatch(chunk):
+                        continue
+                    lines = chunk.split("\n")
+                    candidate = lines[-1]
+                    if candidate and self.RE_FIND_RECORD.fullmatch(candidate):
+                        lines = lines[:-1]
+                    if any(line.strip() for line in lines):
+                        has_diagnostic = True
+                        break
+                if not has_diagnostic:
+                    self.record_scan_error(
+                        "find exited with status {} without an attributable diagnostic".format(command_status)
+                    )
+                return bytes(buffer)
+            raise BrokenPipeError(
+                "ADB command exited with status {}{}".format(
+                    command_status, ": " + diagnostic if diagnostic else ""
+                )
+            )
         return bytes(buffer)
 
     def adb_shell(self, commands: List[str]) -> Iterator[str]:
@@ -173,7 +242,7 @@ class AndroidFileSystem(FileSystem):
 
     def test_connection(self):
         for line in self.adb_shell([":"]):
-            print(line)
+            logging.debug("ADB connection setup: %s", line)
 
             if self.RE_TESTCONNECTION_DAEMON_NOT_RUNNING.fullmatch(line) or self.RE_TESTCONNECTION_DAEMON_STARTED.fullmatch(line):
                 continue
@@ -222,10 +291,21 @@ class AndroidFileSystem(FileSystem):
     def supports_find_printf(self) -> bool:
         """Whether the device's find understands -printf, probed once."""
         if self._find_printf_supported is None:
-            probe = self.decode(self.adb_shell_raw(
-                ["find", "/", "-maxdepth", "0", "-printf", self.FIND_PRINTF_FORMAT]
-            )).rstrip("\0")
-            self._find_printf_supported = self.RE_FIND_RECORD.fullmatch(probe) is not None
+            probe = "<probe failed>"
+            try:
+                probe = self.decode(self.adb_shell_raw(
+                    ["find", "/", "-maxdepth", "0", "-printf", self.FIND_PRINTF_FORMAT]
+                )).rstrip("\0")
+                self._find_printf_supported = self.RE_FIND_RECORD.fullmatch(probe) is not None
+            except BrokenPipeError as exc:
+                # Older Android find builds reject -printf with a nonzero exit.
+                # Only that specific probe failure is a reason to use ls; all
+                # other errors must remain visible to backup callers.
+                if re.search(r"(?:unknown|unrecognized|bad) option[^\n]*-printf", str(exc), re.IGNORECASE):
+                    self._find_printf_supported = False
+                    probe = str(exc)
+                else:
+                    raise
             if not self._find_printf_supported:
                 logging.warning(
                     "Device's find does not support -printf; falling back to parsing 'ls -la'. "
@@ -265,9 +345,23 @@ class AndroidFileSystem(FileSystem):
                     # an absent path is normal: the caller turns the empty
                     # result into FileNotFoundError and handles it
                     logging.debug(line)
+                    self.record_scan_error(line, self._diagnostic_path(line))
                 else:
                     logging.warning(line)
+                    self.record_scan_error(line, self._diagnostic_path(line))
         return records
+
+    @staticmethod
+    def _diagnostic_path(line: str) -> Optional[str]:
+        prefix = next((value for value in ("find: ", "toybox find: ") if line.startswith(value)), None)
+        if prefix is None:
+            return None
+        path_field, separator, _message = line[len(prefix):].rpartition(": ")
+        if not separator:
+            return None
+        if len(path_field) >= 2 and path_field[0] in "'\"" and path_field[-1] == path_field[0]:
+            path_field = path_field[1:-1]
+        return path_field if path_field.startswith("/") else None
 
     def relative_parts(self, root: str, path: str) -> Optional[List[str]]:
         """Path components of `path` relative to `root`, or None if not under it."""
@@ -287,7 +381,7 @@ class AndroidFileSystem(FileSystem):
             command.append("-L")
         command += [tree_path, "-printf", self.FIND_PRINTF_FORMAT]
 
-        records = self.parse_find_output(self.adb_shell_raw(command))
+        records = self.parse_find_output(self.adb_shell_raw(command, allow_nonzero_find=True))
         if not records:
             raise FileNotFoundError(tree_path)
 
@@ -312,11 +406,13 @@ class AndroidFileSystem(FileSystem):
                     logging.warning(f"Skipping broken symlink {path}")
                 else:
                     logging.warning(f"Ignoring symlink {path}")
+                self.record_scan_error("symlink is not backed up: {}".format(path), path)
                 if not parts:
                     return None
                 continue
             if type_char not in ("-", "d"):
                 logging.warning(f"Ignoring special file {path}")
+                self.record_scan_error("special file is not backed up: {}".format(path), path)
                 if not parts:
                     return None
                 continue
@@ -409,6 +505,7 @@ class AndroidFileSystem(FileSystem):
             except UnparseableLsLine:
                 # one unreadable entry must not abort the whole sync (issue #53)
                 logging.warning(f"Skipping unparseable entry in {path}: {line}")
+                self.record_scan_error("unparseable directory entry in {}: {}".format(path, line), path)
 
     @property
     def mtime_precision(self) -> int:
@@ -417,11 +514,14 @@ class AndroidFileSystem(FileSystem):
         return 1 if self.supports_find_printf() else 60
 
     def utime(self, path: str, times: Tuple[int, int]) -> None:
-        # the .%S suffix preserves seconds rather than truncating to the
-        # minute, which previously made every restored mtime drift (issue #48)
-        atime = datetime.datetime.fromtimestamp(times[0]).strftime("%Y%m%d%H%M.%S")
-        mtime = datetime.datetime.fromtimestamp(times[1]).strftime("%Y%m%d%H%M.%S")
-        for line in self.adb_shell(["touch", "-at", atime, "-mt", mtime, path]):
+        # Format in UTC and set the remote shell timezone explicitly: the host
+        # and phone may use different timezones, but these are epoch values.
+        atime = datetime.datetime.fromtimestamp(times[0], datetime.timezone.utc).strftime("%Y%m%d%H%M.%S")
+        mtime = datetime.datetime.fromtimestamp(times[1], datetime.timezone.utc).strftime("%Y%m%d%H%M.%S")
+        script = "TZ=UTC touch -at {} -mt {} {}".format(
+            shlex.quote(atime), shlex.quote(mtime), shlex.quote(path)
+        )
+        for line in self.adb_shell(["sh", "-c", script]):
             self.line_not_captured(line)
 
     def join(self, base: str, leaf: str) -> str:

@@ -119,6 +119,14 @@ class TestParseFindOutput:
         records = afs.parse_find_output(record("-", 1, "1785606518.957574372", "/x"))
         assert records[0].group("st_mtime") == "1785606518"
 
+    def test_unsupported_printf_command_status_uses_legacy_fallback(self, monkeypatch):
+        afs = make_afs()
+        afs._find_printf_supported = None
+        def unsupported(_commands):
+            raise BrokenPipeError("ADB command exited with status 1: find: unknown option -printf")
+        monkeypatch.setattr(afs, "adb_shell_raw", unsupported)
+        assert afs.supports_find_printf() is False
+
 
 class TestGetFilesTree:
     def test_builds_nested_tree(self, monkeypatch):
@@ -127,7 +135,7 @@ class TestGetFilesTree:
               record("d", 4096, "200", "/sdcard/DCIM/Camera") + \
               record("-", 500, "300", "/sdcard/DCIM/Camera/a.jpg") + \
               record("-", 600, "400", "/sdcard/DCIM/b.jpg")
-        monkeypatch.setattr(afs, "adb_shell_raw", lambda commands: raw)
+        monkeypatch.setattr(afs, "adb_shell_raw", lambda commands, **kwargs: raw)
         assert afs.get_files_tree("/sdcard/DCIM") == {
             ".": FileMeta(100, 100, None),
             "Camera": {".": FileMeta(200, 200, None), "a.jpg": FileMeta(300, 300, 500)},
@@ -136,15 +144,22 @@ class TestGetFilesTree:
 
     def test_single_file_root_returns_leaf(self, monkeypatch):
         afs = make_afs()
-        monkeypatch.setattr(afs, "adb_shell_raw", lambda commands: record("-", 42, "900", "/sdcard/a.jpg"))
+        monkeypatch.setattr(afs, "adb_shell_raw", lambda commands, **kwargs: record("-", 42, "900", "/sdcard/a.jpg"))
         assert afs.get_files_tree("/sdcard/a.jpg") == FileMeta(900, 900, 42)
 
     def test_missing_path_raises_filenotfound(self, monkeypatch):
         afs = make_afs()
         monkeypatch.setattr(afs, "adb_shell_raw",
-            lambda commands: b"find: /nope: No such file or directory\n")
+            lambda commands, **kwargs: b"find: /nope: No such file or directory\n")
         with pytest.raises(FileNotFoundError):
             afs.get_files_tree("/nope")
+
+    def test_missing_lstat_path_remains_filenotfound_after_status_check(self, monkeypatch):
+        afs = make_afs()
+        monkeypatch.setattr(afs, "adb_shell_raw",
+            lambda commands: b"find: '/new-folder': No such file or directory\n")
+        with pytest.raises(FileNotFoundError):
+            afs.lstat("/new-folder")
 
     def test_missing_path_is_not_warned_about(self, monkeypatch, caplog):
         """A destination that does not exist yet is normal, not a warning."""
@@ -161,7 +176,7 @@ class TestGetFilesTree:
         raw = record("d", 4096, "100", "/sdcard/DCIM") + \
               record("l", 21, "200", "/sdcard/DCIM/link") + \
               record("-", 500, "300", "/sdcard/DCIM/a.jpg")
-        monkeypatch.setattr(afs, "adb_shell_raw", lambda commands: raw)
+        monkeypatch.setattr(afs, "adb_shell_raw", lambda commands, **kwargs: raw)
         tree = afs.get_files_tree("/sdcard/DCIM")
         assert "link" not in tree
         assert "a.jpg" in tree
@@ -171,9 +186,24 @@ class TestGetFilesTree:
         raw = record("d", 4096, "100", "/sdcard/DCIM") + \
               record("l", 21, "200", "/sdcard/DCIM/link") + \
               record("-", 500, "300", "/sdcard/DCIM/link/orphan.jpg")
-        monkeypatch.setattr(afs, "adb_shell_raw", lambda commands: raw)
+        monkeypatch.setattr(afs, "adb_shell_raw", lambda commands, **kwargs: raw)
         tree = afs.get_files_tree("/sdcard/DCIM")
         assert tree == {".": FileMeta(100, 100, None)}
+
+    def test_find_diagnostic_path_keeps_embedded_quoted_path_text(self):
+        afs = make_afs()
+        message = "find: '/sdcard/selected\"/sdcard/excluded': Permission denied"
+        assert afs._diagnostic_path(message) == '/sdcard/selected"/sdcard/excluded'
+
+
+def test_android_utime_uses_timezone_independent_utc_command(monkeypatch):
+    afs = make_afs()
+    commands = []
+    monkeypatch.setattr(afs, "adb_shell", lambda command: commands.append(command) or [])
+    afs.utime("/sdcard/with space.txt", (0, 3600))
+    assert commands == [[
+        "sh", "-c", "TZ=UTC touch -at 197001010000.00 -mt 197001010100.00 '/sdcard/with space.txt'"
+    ]]
 
 
 class TestRelativeParts:
@@ -263,7 +293,7 @@ class TestAdbShellRaw:
         })()
         return afs
 
-    MARK = AndroidFileSystem.ADBSYNC_END_OF_COMMAND.encode()
+    MARK = (AndroidFileSystem.ADBSYNC_END_OF_COMMAND + ":0").encode()
 
     def test_nul_output_without_trailing_newline(self):
         """The final NUL record and the echoed marker arrive as one readline();
@@ -283,6 +313,30 @@ class TestAdbShellRaw:
         raw = b"d---------|1|1|/a\0----------|2|2|/a/b\0"
         afs = self.make(raw + self.MARK + b"\n")
         assert afs.adb_shell_raw(["find"]) == raw
+
+    def test_command_nonzero_status_is_not_accepted_as_complete(self):
+        afs = self.make(b"partial output\n" +
+                        AndroidFileSystem.ADBSYNC_END_OF_COMMAND.encode() + b":7\n")
+        with pytest.raises(BrokenPipeError, match="status 7"):
+            afs.adb_shell_raw(["find"])
+
+    def test_missing_path_diagnostic_reaches_legacy_file_not_found_parser(self):
+        diagnostic = b"find: '/missing': No such file or directory\n"
+        afs = self.make(diagnostic +
+                        AndroidFileSystem.ADBSYNC_END_OF_COMMAND.encode() + b":1\n")
+        assert afs.adb_shell_raw(["find", "/missing"]) == diagnostic
+
+    def test_partial_find_with_enoent_is_still_a_command_failure(self):
+        partial = b"drwx------|4096|100|/sdcard\0find: /sdcard/gone: No such file or directory\n"
+        afs = self.make(partial +
+                        AndroidFileSystem.ADBSYNC_END_OF_COMMAND.encode() + b":1\n")
+        with pytest.raises(BrokenPipeError, match="status 1"):
+            afs.adb_shell_raw(["find", "/sdcard"])
+
+    def test_missing_completion_marker_is_a_failure(self):
+        afs = self.make(b"partial output\n")
+        with pytest.raises(BrokenPipeError, match="closed before completing"):
+            afs.adb_shell_raw(["find"])
 
 
 class TestTeardown:

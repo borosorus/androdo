@@ -546,5 +546,180 @@ def main():
         logging.info("Empty copy tree")
     logging.info("")
 
+def backup_main():
+    """Entry point for the non-destructive phonebackup CLI."""
+    import argparse
+    import json
+    import subprocess
+    import sys
+    from .Backup import Backup, BackupError, status
+    from .Manifest import ManifestError
+
+    parser = argparse.ArgumentParser(
+        prog="phonebackup",
+        description="Create and update a non-destructive backup of Android shared storage over ADB.",
+    )
+    parser.add_argument("--adb-bin", default="adb", help="ADB executable (default: adb)")
+    parser.add_argument("--device", "-s", metavar="SERIAL", help="Select an ADB device by serial")
+    parser.add_argument("--adb-encoding", default="UTF-8", help="ADB shell text encoding (default: UTF-8)")
+    parser.add_argument("--remote-root", default="/sdcard", help="Android path to back up (default: /sdcard)")
+    commands = parser.add_subparsers(dest="command", required=True)
+    for command, help_text in (
+        ("new", "Create a backup in a new or empty directory"),
+        ("update", "Incrementally update an existing backup"),
+        ("diff", "Preview files that would be transferred"),
+        ("paths", "List files and folders visible on the Android device"),
+        ("history", "Show retained prior versions of backed-up files"),
+        ("prune-history", "Preview or remove selected historical versions"),
+        ("restore", "Export a backed-up version or restore it to Android"),
+        ("verify", "Verify local files against stored hashes"),
+        ("status", "Show manifest and last operation status"),
+    ):
+        subparser = commands.add_parser(command, help=help_text)
+        if command != "paths":
+            subparser.add_argument("destination", help="Backup directory")
+        # Accept common options on either side of the subcommand.
+        subparser.add_argument("--adb-bin", default=argparse.SUPPRESS, help="ADB executable")
+        subparser.add_argument("--device", "-s", metavar="SERIAL", default=argparse.SUPPRESS, help="Select an ADB device")
+        subparser.add_argument("--adb-encoding", default=argparse.SUPPRESS, help="ADB shell text encoding")
+        subparser.add_argument("--remote-root", default=argparse.SUPPRESS, help="Android source path")
+        if command == "update":
+            subparser.add_argument("--dry-run", action="store_true", help="Preview changes without writing files or metadata")
+        if command in ("new", "update", "diff"):
+            subparser.add_argument("--include", action="append", metavar="PATH",
+                                   help="Include this Android path and its contents; repeatable")
+            subparser.add_argument("--exclude", action="append", metavar="PATTERN",
+                                   help="Exclude paths matching this relative glob; repeatable")
+            subparser.add_argument("--all", action="store_true", dest="all_files",
+                                   help="Select all files and clear saved include/exclude rules")
+        if command == "paths":
+            subparser.add_argument("--format", choices=("text", "json"), default="text",
+                                   help="Output format (default: text)")
+        if command == "history":
+            subparser.add_argument("path", nargs="?", help="Show versions for one relative Android file path")
+            subparser.add_argument("--format", choices=("text", "json"), default="text",
+                                   help="Output format (default: text)")
+        if command == "prune-history":
+            subparser.add_argument("--version", action="append", required=True, metavar="ID",
+                                   help="History version ID to remove; repeat to select multiple")
+            subparser.add_argument("--path", help="Limit selection to this relative Android file path")
+            subparser.add_argument("--apply", action="store_true",
+                                   help="Delete selected history versions (default is preview only)")
+        if command == "restore":
+            subparser.add_argument("path", help="Relative Android file path")
+            target = subparser.add_mutually_exclusive_group(required=True)
+            target.add_argument("--to-local", metavar="FILE", help="Export to this local file path")
+            target.add_argument("--to-phone", action="store_true", help="Restore to the original Android path")
+            subparser.add_argument("--version", help="Historical version ID (default: current backup copy)")
+            subparser.add_argument("--overwrite", action="store_true", help="Replace an existing regular-file destination")
+            subparser.add_argument("--dry-run", action="store_true", help="Show the restore target without writing")
+
+    args = parser.parse_args()
+    if getattr(args, "all_files", False) and (args.include or args.exclude):
+        parser.error("--all cannot be combined with --include or --exclude")
+    if args.command == "status":
+        try:
+            status(args.destination)
+            return 0
+        except (BackupError, ManifestError, OSError) as exc:
+            print("phonebackup: {}".format(exc), file=sys.stderr)
+            return 1
+
+    if args.command == "paths":
+        adb_arguments = [args.adb_bin]
+        if args.device:
+            adb_arguments += ["-s", args.device]
+        backup = Backup(".", adb_arguments, args.adb_encoding, args.remote_root)
+        try:
+            result = backup.paths()
+            if args.format == "json":
+                print(json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2))
+            else:
+                print("Source: {}".format(result["remote_root"]))
+                for entry in result["entries"]:
+                    path = json.dumps(entry["path"], ensure_ascii=False)
+                    if entry["type"] == "directory":
+                        print("DIR   {}".format(path))
+                    else:
+                        print("FILE  {:>12} bytes  {}".format(entry["size"], path))
+                for warning in result["warnings"]:
+                    print("WARNING: {}".format(warning), file=sys.stderr)
+            return 0
+        except (BackupError, ManifestError, OSError, BrokenPipeError, subprocess.SubprocessError) as exc:
+            print("phonebackup: {}".format(exc), file=sys.stderr)
+            return 1
+        finally:
+            backup.close()
+
+    if args.command == "history":
+        try:
+            result = Backup(args.destination, [], args.adb_encoding, args.remote_root).history(args.path)
+            if args.format == "json":
+                print(json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2))
+            elif args.path is not None:
+                print("History: {}".format(result["path"]))
+                for version in result["versions"]:
+                    print("{}  {} bytes  {}  SHA-256 {}".format(
+                        version["id"], version["size"], version["captured_at"], version["sha256"]
+                    ))
+            else:
+                for path, versions in result["files"].items():
+                    print(json.dumps(path, ensure_ascii=False))
+                    for version in versions:
+                        print("  {}  {} bytes  {}".format(version["id"], version["size"], version["captured_at"]))
+            return 0
+        except (BackupError, ManifestError, OSError) as exc:
+            print("phonebackup: {}".format(exc), file=sys.stderr)
+            return 1
+
+    if args.command == "prune-history":
+        try:
+            Backup(args.destination, [], args.adb_encoding, args.remote_root).prune_history(
+                args.version, relpath=args.path, apply=args.apply
+            )
+            return 0
+        except (BackupError, ManifestError, OSError) as exc:
+            print("phonebackup: {}".format(exc), file=sys.stderr)
+            return 1
+
+    if args.command == "restore":
+        adb_arguments = [args.adb_bin]
+        if args.device:
+            adb_arguments += ["-s", args.device]
+        backup = Backup(args.destination, adb_arguments, args.adb_encoding, args.remote_root)
+        try:
+            backup.restore(args.path, to_local=args.to_local, to_phone=args.to_phone,
+                           version_id=args.version, overwrite=args.overwrite, dry_run=args.dry_run)
+            return 0
+        except (BackupError, ManifestError, OSError, BrokenPipeError, subprocess.SubprocessError) as exc:
+            print("phonebackup: {}".format(exc), file=sys.stderr)
+            return 1
+        finally:
+            backup.close()
+
+    adb_arguments = [args.adb_bin]
+    if args.device:
+        adb_arguments += ["-s", args.device]
+    backup = None
+    try:
+        backup = Backup(args.destination, adb_arguments, args.adb_encoding, args.remote_root)
+        if args.command in ("new", "update"):
+            backup.run(create=args.command == "new", dry_run=getattr(args, "dry_run", False),
+                       include=getattr(args, "include", None), exclude=getattr(args, "exclude", None),
+                       all_files=getattr(args, "all_files", False))
+        elif args.command == "diff":
+            backup.diff(include=args.include, exclude=args.exclude, all_files=args.all_files)
+        elif args.command == "verify":
+            result = backup.verify()
+            return 1 if result["failed"] or result["no_hash"] else 0
+        return 0
+    except (BackupError, ManifestError, OSError, BrokenPipeError, subprocess.SubprocessError) as exc:
+        print("phonebackup: {}".format(exc), file=sys.stderr)
+        return 1
+    finally:
+        if backup is not None:
+            backup.close()
+
+
 if __name__ == "__main__":
     main()
