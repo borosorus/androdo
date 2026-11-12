@@ -1121,13 +1121,17 @@ def test_case_insensitive_host_collision_is_rejected_on_macos_like_filesystems()
         _validate_host_path_collisions(["DCIM/Photo.jpg", "dcim/other.jpg"], case_insensitive=True)
 
 
-def test_manifest_file_aliases_are_indexed_before_replacement(tmp_path):
+@pytest.mark.parametrize("alias", ["a.txt", "linked.txt"])
+def test_manifest_file_aliases_are_indexed_before_replacement(tmp_path, alias):
     root = tmp_path / "backup"
     root.mkdir()
     (root / "A.txt").write_text("first")
-    os.link(root / "A.txt", root / "a.txt")
+    # Case-insensitive volumes already resolve a.txt to A.txt. Other volumes
+    # need a hard link to exercise the same identity collision.
+    if not (root / alias).exists():
+        os.link(root / "A.txt", root / alias)
     with pytest.raises(BackupError, match="alias on this filesystem"):
-        _build_identity_index(root, ["A.txt", "a.txt"])
+        _build_identity_index(root, ["A.txt", alias])
 
 
 def test_new_target_created_during_pull_is_not_overwritten(fake_adb, tmp_path, monkeypatch):

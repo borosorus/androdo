@@ -79,6 +79,52 @@ For a command-line install, `pipx install .` installs the `phonebackup` and
 is available on `PATH`; on macOS with Homebrew this is `brew install
 android-platform-tools`.
 
+### macOS development and device checks
+
+From the repository directory, create an isolated development environment:
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+python -m pytest -q
+adbsync --version
+phonebackup --help
+adb version
+```
+
+The tests use a fake ADB executable and temporary local directories; they do
+not need or access a phone. They cover backup updates, history, restore,
+interrupted transfers, locking, and local integrity verification.
+
+For a first device check, enable USB debugging on Android, connect a data-capable
+USB cable, unlock the phone, and accept its debugging authorization prompt.
+`adb devices -l` should list it with state `device`. Start by listing paths and
+backing up one small, known folder (replace `Documents` below with that folder):
+
+```sh
+adb devices -l
+phonebackup paths --format json
+phonebackup new "$HOME/PhoneBackupTrial" --include Documents
+phonebackup verify "$HOME/PhoneBackupTrial"
+phonebackup diff "$HOME/PhoneBackupTrial"
+phonebackup update "$HOME/PhoneBackupTrial"
+phonebackup status "$HOME/PhoneBackupTrial"
+```
+
+Use a new or empty destination for `new`. An unchanged phone should produce
+no planned transfers in `diff`, and `update` should skip unchanged files.
+Then change a disposable test file on the phone and run `update`, `history`,
+and `verify` to check version retention. These commands read from the phone;
+restoring to the phone is a separate, explicit operation. With multiple devices,
+add `--device SERIAL` to each `phonebackup` command.
+
+Most Mac volumes are case-insensitive. Backup scans reject Android paths that
+differ only in case or Unicode normalization rather than merge their contents.
+The current macOS check is conservative even on case-sensitive volumes.
+Test the actual destination volume too if you plan to use an external drive:
+its filesystem can have different locking, hard-link, and durability behavior.
+
 ## Android backups with `phonebackup`
 
 `phonebackup` creates a one-way, non-destructive backup of files that standard
