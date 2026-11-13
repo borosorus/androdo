@@ -6,7 +6,7 @@ struct BackupReviewSheet: View {
 
     var body: some View {
         ReviewSheetLayout(title: "Review Backup",
-                          subtitle: "Check the scope and changes before creating this restore point.",
+                          subtitle: "",
                           minimumWidth: 640, minimumHeight: 430) {
             if let plan = model.backupPlan {
                 VStack(alignment: .leading, spacing: 18) {
@@ -14,7 +14,7 @@ struct BackupReviewSheet: View {
                         SummaryMetric("Files", value: plan.fileCount, symbol: "doc")
                         SummaryMetric("Folders", value: plan.directoryCount, symbol: "folder")
                         SummaryMetric("To copy", value: plan.transferCount, symbol: "arrow.down.to.line")
-                        SummaryMetric("Already saved", value: plan.reusedCount, symbol: "checkmark.icloud")
+                        SummaryMetric("Already saved", value: plan.reusedCount, symbol: "checkmark.circle")
                     }
                     Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
                         row("Data to transfer", UIFormatting.bytes(plan.bytesToTransfer))
@@ -50,7 +50,7 @@ struct BackupReviewSheet: View {
                 if model.isStartingOperation { ProgressView().controlSize(.small); Text("Starting…") }
                 else { Text("Start Backup") }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue)
             .keyboardShortcut(.defaultAction)
             .disabled(model.backupPlan == nil || model.isStartingOperation)
         }

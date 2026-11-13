@@ -7,7 +7,7 @@ struct LocalExportReviewSheet: View {
 
     var body: some View {
         ReviewSheetLayout(title: model.restorePlanTitle,
-                          subtitle: "Check the destination and approve any replacements before writing.",
+                          subtitle: "",
                           minimumWidth: 620, minimumHeight: 430) {
             if let plan = model.restorePlan {
                 VStack(alignment: .leading, spacing: 18) {
@@ -78,7 +78,7 @@ struct LocalExportReviewSheet: View {
                 if model.isStartingOperation { ProgressView().controlSize(.small); Text("Starting…") }
                 else { Text(model.restoreTargetIsPhone ? "Restore to Phone" : "Export") }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue)
             .disabled(!canExport || model.isStartingOperation)
             .keyboardShortcut(.defaultAction)
         }

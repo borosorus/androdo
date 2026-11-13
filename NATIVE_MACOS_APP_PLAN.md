@@ -28,6 +28,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 7 — Build the backup-first SwiftUI experience and offline restore browser. Commit: `feat(ui): add backup and local restore flows`. Review: approved, no blockers; follow-up findings addressed.
 - [x] Step 8 — Build the phone file browser, Activity, and accessibility polish. Commit: `feat(ui): add phone browser and operation activity`. Review: approved after fixes for device-bound restore browsing, Finder promise device binding, asynchronous safe-no-overwrite recovery, empty-folder drops, verified Activity counts, and preventing review dismissal during operation startup.
 - [x] Step 8.1 — Refine native navigation, selection, and shared operation/review flows. Commit: `refactor(ui): unify native macOS navigation and flows`. Review: approved after fixes for reconnect navigation, restore replacement messaging, bounded global recovery, and accurate exclusion labels.
+- [x] Step 8.2 — Give the app a distinct native identity, simplify the Overview and backup library, and reduce instructional copy. Commit: `feat(ui): add a distinctive native Mac identity`. Review: approved after fixes for text contrast and Settings error visibility.
 - [ ] Step 9 — Complete packaging, CI, and end-to-end acceptance. Local packaging and CI committed as `build(macOS): package app and add acceptance checks`; reviewer approved. Phone acceptance remains pending an explicitly selected disposable folder.
 
 ## Steps
@@ -149,6 +150,21 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 **Review:** Confirm page selection is clear, operation cancellation and recovery remain available on all pages, review actions stay visible with long conflict lists, Cancel discards uncommitted selection changes, and sheet presentation does not close when backup startup fails.
 
 **Complete:** Added selectable native sidebar navigation separated from device choice, a bounded global progress/recovery area with centralized omission confirmation, shared page and sheet components, pinned cancel/confirm actions, transactional backup selection, correct selected-versus-excluded summaries, keyboard/context-menu folder opening, resizable backup columns, and collapsed restore-tree rows. `swift test` passed (69 core and 14 UI-model tests); `git diff --check` passed; the Apple Silicon app bundle rebuilt and its ad-hoc signature verified. Reviewer approved after the listed fixes. No phone folders were read or changed. Interactive sheet behavior, Return-key navigation, VoiceOver, and very large recovery lists still need manual visual acceptance in Step 9.
+
+### Step 8.2 — Visual identity and approachable Mac presentation
+
+**Design agreement:** Familiar and approachable; blue/teal identity with restrained copper accents. Planner reviewed the existing screens and proposed the device-first Overview, native navigation, simpler library, and concise copy. The user approved this direction before implementation.
+
+**Actionable slice (one implementation commit):**
+1. Add semantic, appearance-aware accent colors, an original phone/archive emblem, a neutral Android illustration, and reusable Overview rows. Render fictional-data light/dark previews without an AppModel or transport.
+2. Recompose Overview around the phone and Back Up action. Keep the destination and selected scope visible. Add colored native sidebar glyphs and move routine ADB configuration into Settings, retaining missing-ADB recovery.
+3. Replace the backup library's repository column with a picker; retain two resizable browsing panes. Align Files, Activity, review sheets, and compact operation progress. Preserve explicit conflict approvals and bounded recovery controls.
+4. Generate a local app icon at exact pixel sizes, package it into the app, preserve the bundle permission correction, and show the packaged build revision in Settings.
+5. Run Swift checks, render/inspect appearance previews, rebuild/verify the bundle, resolve reviewer findings, update this journal, and commit.
+
+**Commit:** `feat(ui): add a distinctive native Mac identity`
+
+**Complete:** Added the device-first Overview, original phone/archive identity and packaged Dock icon, blue/teal accents with copper backup-history details, appearance/contrast-aware control colors, concise copy, Settings with local ADB error presentation and build identity, a two-pane backup library, and compact progress with bounded recovery controls. Kept file browsing native and preserved selection drafts, replacement approvals, cancellation, and incomplete restore-point messaging. Swift tests passed (69 core + 14 UI-model); the final app bundle built with valid Info.plist, icon and ad-hoc signature, and traversable package permissions. `bash -n` and `git diff --check` passed. Fictional-data Overview previews were rendered and visually inspected in light/dark appearance; they are isolated compositions, not running-app screenshots. Reviewer approved after fixes for text contrast and Settings error visibility. Full-window sizing, interactive keyboard/VoiceOver, and selected-folder phone acceptance remain Step 9 work. No phone folders or user backup data were accessed. No latest-backup date is inferred from the library selection, which may belong to a different device.
 
 ### Step 9 — Packaging and end-to-end acceptance
 

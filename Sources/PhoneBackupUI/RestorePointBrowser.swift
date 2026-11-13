@@ -8,15 +8,24 @@ struct RestorePointBrowser: View {
     var body: some View {
         VStack(spacing: 0) {
             if let point = model.selectedRestorePoint {
-                AppPageHeader(title: "Restore Point", subtitle: "\(point.createdAt.formatted(date: .long, time: .shortened)) · \(model.restoreEntries.count) stored entries") {
-                    HStack {
-                    Button("Restore to Phone…") { showingPhoneRestore = true }
-                        .disabled(model.selectedRestoreRoots.isEmpty || model.isBusy)
-                    Button("Export Selected…") { chooseExportFolder() }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(model.selectedRestoreRoots.isEmpty || model.isBusy)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "archivebox.fill").font(.title2).foregroundStyle(AppIdentity.copper)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(point.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.headline)
+                            Text("\(point.entryCount) items · \(UIFormatting.bytes(point.totalBytes))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
                     }
-                }
+                    HStack {
+                        Button("Restore to Phone…") { showingPhoneRestore = true }
+                            .disabled(model.selectedRestoreRoots.isEmpty || model.isBusy)
+                        Button("Export…") { chooseExportFolder() }
+                            .disabled(model.selectedRestoreRoots.isEmpty || model.isBusy)
+                        Spacer(minLength: 0)
+                    }.controlSize(.small)
+                }.padding(18)
                 Divider()
                 if model.restoreEntries.isEmpty {
                     ContentUnavailableView("This restore point has no stored entries", systemImage: "doc.questionmark")
@@ -26,10 +35,10 @@ struct RestorePointBrowser: View {
                     }.listStyle(.inset)
                 }
                 if point.state == .incomplete || !point.omissions.isEmpty {
-                    MessageBanner(text: "This restore point has \(point.omissions.count) recorded omission(s). Some selected device paths were not saved.", symbol: "exclamationmark.triangle", isWarning: true).padding(12)
+                    MessageBanner(text: "\(point.omissions.count) paths were skipped in this restore point.", symbol: "exclamationmark.triangle", isWarning: true).padding(12)
                 }
             } else {
-                ContentUnavailableView("Select a restore point", systemImage: "clock.arrow.circlepath", description: Text("Restore points are immutable snapshots. Browse them without connecting the phone."))
+                ContentUnavailableView("Select a restore point", systemImage: "clock.arrow.circlepath", description: Text("Choose a dated backup to browse or restore its files."))
             }
         }
         .sheet(isPresented: $showingPhoneRestore) { PhoneRestoreDestinationSheet() }
@@ -74,7 +83,7 @@ private struct RestoreEntryRow: View {
     private var rowContent: some View {
         HStack(spacing: 8) {
             Toggle(isOn: Binding(get: { model.selectedRestoreRoots.contains(entry.path) }, set: { _ in model.toggleRestoreRoot(entry.path) })) {
-                Label(entry.path.name ?? entry.path.description, systemImage: entry.kind == .directory ? "folder" : "doc")
+                Label(entry.path.name ?? entry.path.description, systemImage: entry.kind == .directory ? "folder.fill" : "doc")
                     .lineLimit(1)
             }.toggleStyle(.checkbox).disabled(model.isBusy)
             Spacer()

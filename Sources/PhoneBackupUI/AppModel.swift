@@ -73,6 +73,7 @@ public final class AppModel {
     public var isOperationRunning: Bool { operationID != nil }
     public var isBusy: Bool { isPlanningBackup || isPlanningExport || isPlanningCopy || isStartingOperation || isOperationRunning || isRefreshingDevices }
     public var hasADB: Bool { services.deviceTransport != nil }
+    public var adbExecutableURL: URL? { services.adbExecutable }
     public var selectedRepository: BackupRepositoryInfo? {
         repositories.first(where: { $0.id == selectedRepositoryID })
     }

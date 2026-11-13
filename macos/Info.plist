@@ -10,6 +10,8 @@
 	<string>PhoneBackupApp</string>
 	<key>CFBundleIdentifier</key>
 	<string>app.bestest.PhoneBackup</string>
+	<key>CFBundleIconFile</key>
+	<string>PhoneBackup</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>

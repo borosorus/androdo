@@ -20,5 +20,9 @@ struct PhoneBackupApp: App {
                 .frame(minWidth: 900, minHeight: 600)
         }
         .defaultSize(width: 1120, height: 760)
+
+        Settings {
+            PhoneBackupSettings().environment(model)
+        }
     }
 }

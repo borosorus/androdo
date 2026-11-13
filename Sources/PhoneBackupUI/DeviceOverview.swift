@@ -8,113 +8,87 @@ struct DeviceOverview: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                AppPageHeader(title: "Overview", subtitle: "Choose what to save, then review the backup before it starts.")
-
-                GroupBox("Android device") {
-                    HStack(spacing: 14) {
-                        Image(systemName: deviceSymbol)
-                            .font(.system(size: 25))
-                            .foregroundStyle(model.selectedDevice?.state == .device ? Color.accentColor : Color.secondary)
-                            .frame(width: 48, height: 48)
-                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(model.selectedDevice?.model ?? "No device connected")
-                                .font(.headline)
-                            Text(deviceStatus)
-                                .font(.callout).foregroundStyle(.secondary)
-                            if let device = model.selectedDevice {
-                                Text(device.id.serial).font(.caption.monospaced()).foregroundStyle(.tertiary).textSelection(.enabled)
-                            }
+                DeviceBackupHero(name: model.selectedDevice?.model ?? "Your Android",
+                                 status: deviceStatus,
+                                 connected: model.selectedDevice?.state == .device) {
+                    if model.isPlanningBackup {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("Preparing…").foregroundStyle(.secondary)
+                            Button("Cancel") { model.cancelPlanning() }.keyboardShortcut(.cancelAction)
                         }
-                        Spacer()
-                    }.frame(maxWidth: .infinity, alignment: .leading).padding(4)
+                    } else {
+                        Button { Task { await model.reviewBackup() } } label: {
+                            Label("Back Up…", systemImage: "arrow.down.to.line")
+                        }
+                        .buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue)
+                        .controlSize(.large)
+                        .disabled(model.isBusy || model.backupLocation == nil || model.selectedDevice?.state != .device)
+                    }
                 }
 
-                if let message = model.statusMessage { MessageBanner(text: message) }
+                if let message = model.statusMessage, model.selectedDevice != nil { MessageBanner(text: message) }
 
-                GroupBox("Backup destination") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        LabeledContent("Location") {
-                            Text(model.backupLocation?.path ?? "Choose a folder on this Mac")
-                                .foregroundStyle(model.backupLocation == nil ? Color.secondary : Color.primary)
-                                .lineLimit(2).textSelection(.enabled)
+                VStack(spacing: 0) {
+                    OverviewSettingRow(title: "Back up to", symbol: "externaldrive.fill") {
+                        if let location = model.backupLocation {
+                            Text(location.lastPathComponent).fontWeight(.medium)
+                            Text(location.path).font(.caption).lineLimit(2).textSelection(.enabled)
+                        } else {
+                            Text("Choose a backup folder")
                         }
-                        Text("Backups remain on this Mac or the external drive you choose.")
-                            .font(.callout).foregroundStyle(.secondary)
-                        HStack {
-                            Spacer()
-                            Button(model.backupLocation == nil ? "Choose Folder…" : "Change Folder…") {
-                                guard let folder = NativeFilePanels.chooseFolder(
-                                    prompt: "Choose Backup Folder",
-                                    message: "PhoneBackup creates a device repository inside this folder.") else { return }
-                                Task { await model.chooseBackupLocation(folder) }
-                            }
-                            .disabled(model.isBusy)
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading).padding(4)
-                }
-
-                GroupBox("What to back up") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Label(selectionTitle, systemImage: "checklist").font(.headline)
-                            Spacer()
-                            Button("Choose Folders…") { showingSelection = true }
-                                .disabled(model.isBusy || model.selectedDevice?.state != .device)
-                        }
-                        Text(selectionDetail).foregroundStyle(.secondary)
+                    } action: {
+                        Button(model.backupLocation == nil ? "Choose…" : "Change…") {
+                            guard let folder = NativeFilePanels.chooseFolder(
+                                prompt: "Choose Backup Folder",
+                                message: "PhoneBackup creates a device repository inside this folder.") else { return }
+                            Task { await model.chooseBackupLocation(folder) }
+                        }.disabled(model.isBusy)
+                    }
+                    Divider().padding(.leading, 72)
+                    OverviewSettingRow(title: "Included folders", symbol: "folder.fill", color: AppIdentity.teal) {
+                        Text(selectionTitle)
                         if !selectionPathRows.isEmpty {
                             DisclosureGroup(selectionDisclosureTitle) {
                                 ForEach(selectionPathRows) { row in
-                                    HStack(spacing: 8) {
+                                    HStack(spacing: 6) {
                                         Image(systemName: row.isExcluded ? "minus.circle" : "folder")
-                                            .foregroundStyle(row.isExcluded ? Color.secondary : Color.accentColor)
                                         Text(row.path.description).lineLimit(1).textSelection(.enabled)
-                                        if row.isExcluded {
-                                            Text("Excluded").font(.caption).foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                        if row.isExcluded { Text("Excluded").font(.caption) }
+                                    }.frame(maxWidth: .infinity, alignment: .leading)
                                 }.padding(.top, 4)
-                            }
-                            .font(.callout)
+                            }.font(.caption)
                         }
-                    }.frame(maxWidth: .infinity, alignment: .leading).padding(4)
-                }
-
-                HStack {
-                    if model.isPlanningBackup {
-                        ProgressView("Preparing backup plan…")
-                        Button("Cancel") { model.cancelPlanning() }.keyboardShortcut(.cancelAction)
-                    } else {
-                        Button {
-                            Task { await model.reviewBackup() }
-                        } label: {
-                            Label("Back Up Now", systemImage: "arrow.down.to.line")
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(model.isBusy || model.backupLocation == nil || model.selectedDevice?.state != .device)
+                    } action: {
+                        Button("Choose…") { showingSelection = true }
+                            .disabled(model.isBusy || model.selectedDevice?.state != .device)
                     }
-                    Spacer()
                 }
+                .background(.background, in: RoundedRectangle(cornerRadius: 16))
+                .overlay { RoundedRectangle(cornerRadius: 16).strokeBorder(.primary.opacity(0.06)) }
+
+                HStack(spacing: 12) {
+                    Image(systemName: "clock.arrow.circlepath").foregroundStyle(AppIdentity.copper)
+                    Text("Backup history").font(.callout.weight(.medium))
+                    Spacer()
+                    Button("Browse Backups") { model.section = .backups }
+                }.padding(.horizontal, 18)
+
             }
             .frame(maxWidth: 760, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .top)
             .padding(.horizontal, 28)
-            .padding(.bottom, 28)
+            .padding(.vertical, 28)
         }
         .navigationTitle("Overview")
         .sheet(isPresented: $showingSelection) { BackupSelectionEditor() }
     }
 
-    private var deviceSymbol: String {
-        model.selectedDevice?.state == .device ? "iphone.gen3" : "cable.connector.slash"
-    }
-
     private var deviceStatus: String {
-        guard let device = model.selectedDevice else { return "Connect by USB and authorize this Mac." }
+        guard model.hasADB else { return "Set up the Android connection to get started." }
+        guard let device = model.selectedDevice else { return "Connect your phone by USB." }
         return switch device.state {
-        case .device: "Connected and ready"
+        case .device: "Connected"
         case .unauthorized: "Unlock the phone and allow USB debugging."
         case .offline: "The phone is offline. Reconnect the USB cable."
         case .bootloader, .recovery, .sideload: "Android is in a maintenance mode. Restart it to browse shared files."
@@ -125,17 +99,12 @@ struct DeviceOverview: View {
     private var selectionTitle: String {
         switch model.backupSelection.scope {
         case .allSharedStorage: "All shared files"
-        case .selected(let roots): roots.isEmpty ? "No folders selected" : "\(roots.count) selected"
-        }
-    }
-
-    private var selectionDetail: String {
-        switch model.backupSelection.scope {
-        case .allSharedStorage:
-            let excluded = model.backupSelection.excludedRoots.count
-            return excluded == 0 ? "Files Android exposes under /sdcard." : "Shared storage, excluding \(excluded) folder(s)."
         case .selected(let roots):
-            return roots.isEmpty ? "Choose the folders you want in each restore point." : "Only the selected files and folders are included."
+            if roots.isEmpty { "No folders selected" }
+            else {
+                roots.prefix(2).map { $0.name ?? $0.description }.joined(separator: ", ")
+                    + (roots.count > 2 ? " +\(roots.count - 2) more" : "")
+            }
         }
     }
 
@@ -178,7 +147,7 @@ struct BackupSelectionEditor: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AppPageHeader(title: "Choose backup folders", subtitle: "Folders are listed only when you open them.")
+            AppPageHeader(title: "Choose backup folders", subtitle: "")
             Divider()
             Toggle(isOn: allSharedFilesBinding) {
                 VStack(alignment: .leading, spacing: 3) {
@@ -240,7 +209,7 @@ struct BackupSelectionEditor: View {
         switch currentSelection.scope {
         case .allSharedStorage:
             return currentSelection.excludedRoots.isEmpty ? "All shared files selected" : "All shared files · \(currentSelection.excludedRoots.count) excluded"
-        case .selected(let roots): return "\(roots.count) file(s) or folder(s) selected"
+        case .selected(let roots): return "\(roots.count) selected"
         }
     }
 }

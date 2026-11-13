@@ -6,48 +6,57 @@ struct RestoreLibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AppPageHeader(title: "Backups", subtitle: "Browse restore points and export files, even when the phone is disconnected.") {
-                Button(model.backupLocation == nil ? "Choose Backup Folder…" : "Change Folder…") {
-                    if let folder = NativeFilePanels.chooseFolder(prompt: "Open Backup Folder", message: "Select the folder containing PhoneBackup device repositories.") {
-                        Task { await model.chooseBackupLocation(folder) }
-                    }
-                }.disabled(model.isBusy)
-            }
-            Divider()
             if model.requiresRepositoryRecoveryConfirmation {
                 ContentUnavailableView {
                     Label("Backup location needs attention", systemImage: "externaldrive.badge.exclamationmark")
                 } description: {
-                    Text(model.errorMessage ?? "The previously used repository was not found. Choose the original backup folder or explicitly authorize this location as a new repository.")
+                    Text(model.errorMessage ?? "The previous repository was not found. Locate it or choose a new backup location.")
                 } actions: {
-                    Button("Choose Existing Folder…") {
-                        if let folder = NativeFilePanels.chooseFolder(prompt: "Locate Existing Backup Folder") { Task { await model.chooseBackupLocation(folder) } }
-                    }
+                    Button("Choose Existing Folder…") { chooseLocation() }
                     Button("Use as New Backup Location", role: .destructive) { model.authorizeNewRepositoryAtSelectedLocation() }
+                        .disabled(model.isBusy)
                 }
             } else if model.repositories.isEmpty {
-                ContentUnavailableView("No backup repository", systemImage: "externaldrive", description: Text("Choose a folder to open or create a backup repository. A connected phone is not needed to browse existing backups."))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ContentUnavailableView {
+                    Label("Your backup library", systemImage: "externaldrive.fill")
+                } description: {
+                    Text("Open a backup folder to browse its restore points.")
+                } actions: {
+                    Button("Open Backup Folder…") { chooseLocation() }.disabled(model.isBusy)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 HSplitView {
-                    repositoryColumn.frame(minWidth: 190, idealWidth: 220, maxWidth: 280)
-                    pointColumn.frame(minWidth: 220, idealWidth: 260, maxWidth: 320)
-                    RestorePointBrowser().frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+                    VStack(spacing: 0) {
+                        Picker("Device", selection: Binding(get: { model.selectedRepositoryID }, set: { id in
+                            if let id { Task { await model.selectRepository(id) } }
+                        })) {
+                            ForEach(model.repositories) { repository in
+                                Text(repository.displayName).tag(Optional(repository.id))
+                            }
+                        }
+                        .labelsHidden().disabled(model.isBusy)
+                        .padding(14)
+                        Divider()
+                        pointColumn
+                    }
+                    .frame(minWidth: 200, idealWidth: 240, maxWidth: 290)
+                    RestorePointBrowser().frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
         .navigationTitle("Backups")
+        .toolbar {
+            ToolbarItem {
+                Button { chooseLocation() } label: { Label("Open Backup Folder…", systemImage: "folder.badge.gearshape") }
+                    .disabled(model.isBusy)
+            }
+        }
     }
 
-    private var repositoryColumn: some View {
-        List(selection: Binding(get: { model.selectedRepositoryID }, set: { id in if let id { Task { await model.selectRepository(id) } } })) {
-            Section("Devices") {
-                ForEach(model.repositories) { repository in
-                    Label(repository.displayName, systemImage: "externaldrive").tag(repository.id)
-                        .help(repository.location.path)
-                }
-            }
-        }.listStyle(.sidebar)
+    private func chooseLocation() {
+        if let folder = NativeFilePanels.chooseFolder(prompt: "Open Backup Folder") {
+            Task { await model.chooseBackupLocation(folder) }
+        }
     }
 
     private var pointColumn: some View {
@@ -56,16 +65,29 @@ struct RestoreLibraryView: View {
         })) {
             Section("Restore points") {
                 ForEach(model.restorePoints) { point in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(point.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.callout.weight(.medium))
-                            if point.state == .incomplete || !point.omissions.isEmpty { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .foregroundStyle(AppIdentity.copper).padding(.top, 2)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(point.createdAt.formatted(date: .abbreviated, time: .omitted)).font(.callout.weight(.semibold))
+                            Text(point.createdAt.formatted(date: .omitted, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                            Text("\(point.entryCount) items · \(UIFormatting.bytes(point.totalBytes))")
+                                .font(.caption).foregroundStyle(.secondary)
+                            if point.state == .incomplete || !point.omissions.isEmpty {
+                                Label("Incomplete · \(point.omissions.count) skipped", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.caption).foregroundStyle(.orange)
+                            } else {
+                                Label("Complete", systemImage: "checkmark.circle").font(.caption).foregroundStyle(.secondary)
+                            }
                         }
-                        Text("\(point.entryCount) items · \(UIFormatting.bytes(point.totalBytes))\(point.omissions.isEmpty ? "" : " · \(point.omissions.count) omissions")")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }.tag(point.id)
+                    }.padding(.vertical, 6).tag(point.id)
                 }
             }
         }.listStyle(.inset)
+        .overlay {
+            if model.restorePoints.isEmpty {
+                ContentUnavailableView("No restore points", systemImage: "clock.arrow.circlepath")
+            }
+        }
     }
 }

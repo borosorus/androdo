@@ -13,10 +13,16 @@ public struct MainWindow: View {
         @Bindable var model = model
         NavigationSplitView {
             List(selection: Binding<AppSection?>(get: { model.section }, set: { section in if let section { model.section = section } })) {
-                Section("DEVICES") {
+                Section {
+                    Label { Text("Overview") } icon: { SidebarGlyph(symbol: "rectangle.portrait", color: AppIdentity.blue) }.tag(AppSection.device)
+                    Label { Text("Backups") } icon: { SidebarGlyph(symbol: "externaldrive.fill", color: AppIdentity.copper) }.tag(AppSection.backups)
+                    Label { Text("Files") } icon: { SidebarGlyph(symbol: "folder.fill", color: AppIdentity.blue) }.tag(AppSection.files)
+                    Label { Text("Activity") } icon: { SidebarGlyph(symbol: "clock.arrow.circlepath", color: AppIdentity.teal) }.tag(AppSection.activity)
+                }
+                Section("Devices") {
                     if model.devices.isEmpty {
-                        Label(model.hasADB ? "No device connected" : "ADB not found", systemImage: "cable.connector.slash")
-                            .foregroundStyle(.secondary)
+                        Label(model.hasADB ? "Not connected" : "Connection setup needed", systemImage: "cable.connector.slash")
+                            .font(.callout).foregroundStyle(.secondary)
                     }
                     ForEach(model.devices) { device in
                         Button {
@@ -26,32 +32,32 @@ public struct MainWindow: View {
                             DeviceSidebarRow(device: device, isSelected: model.selectedDevice?.id == device.id)
                         }
                         .buttonStyle(.plain)
+                        .disabled(model.isBusy)
                         .accessibilityLabel("Select \(device.model ?? "Android device") \(device.id.serial)")
                     }
-                }
-
-                Section("PHONE") {
-                    Label("Overview", systemImage: "iphone.gen3").tag(AppSection.device)
-                    Label("Files", systemImage: "folder").tag(AppSection.files)
-                        .foregroundStyle(model.selectedDevice?.state == .device ? Color.primary : Color.secondary)
-                }
-
-                Section("LIBRARY") {
-                    Label("Backups", systemImage: "externaldrive").tag(AppSection.backups)
-                    Label("Activity", systemImage: "clock.arrow.circlepath").tag(AppSection.activity)
                 }
             }
             .listStyle(.sidebar)
             .navigationTitle(PhoneBackupCore.applicationName)
+            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 280)
+            .safeAreaInset(edge: .top) {
+                HStack(spacing: 10) {
+                    AppEmblem().frame(width: 32, height: 32)
+                    Text("PhoneBackup").font(.headline)
+                    Spacer()
+                }.padding(.horizontal, 16).padding(.vertical, 18)
+            }
             .safeAreaInset(edge: .bottom) {
-                if model.backupLocation != nil {
-                    Label("On this Mac", systemImage: "lock.shield")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
+                HStack {
+                    if !model.hasADB {
+                        Button("Set Up Connection…") { showingADBPanel = true }.disabled(model.isBusy)
+                    } else {
+                        SettingsLink { Label("Settings", systemImage: "gearshape") }
+                    }
+                    Spacer()
                 }
+                .font(.callout).buttonStyle(.borderless)
+                .padding(14)
             }
         } detail: {
             Group {
@@ -63,14 +69,12 @@ public struct MainWindow: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .windowBackgroundColor))
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if showsOperationStatus {
-                    ScrollView {
-                        OperationStatusView(showingOmissionConfirmation: $showingOmissionConfirmation)
-                            .padding(16)
-                    }
-                    .frame(maxHeight: 280)
-                    .background(.bar)
+                    OperationStatusView(showingOmissionConfirmation: $showingOmissionConfirmation)
+                        .padding(14)
+                        .background(.bar)
                 }
             }
             .confirmationDialog("Finish this backup with skipped paths?", isPresented: $showingOmissionConfirmation, titleVisibility: .visible) {
@@ -80,10 +84,9 @@ public struct MainWindow: View {
                 Text("The restore point will be marked incomplete and will list the paths that could not be saved.")
             }
         }
+        .tint(AppIdentity.blue)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button(model.hasADB ? "Change ADB…" : "Locate ADB…") { showingADBPanel = true }
-                    .disabled(model.isBusy)
                 Button {
                     Task { await model.refreshDevices() }
                 } label: {

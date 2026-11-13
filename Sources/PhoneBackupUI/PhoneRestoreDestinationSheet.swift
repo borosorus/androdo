@@ -9,7 +9,7 @@ struct PhoneRestoreDestinationSheet: View {
 
     var body: some View {
         ReviewSheetLayout(title: "Restore to Android",
-                          subtitle: "Choose where the selected files should go. Existing files are reviewed before replacement.",
+                          subtitle: "Existing files are reviewed before replacement.",
                           minimumWidth: 540, minimumHeight: 360) {
             VStack(alignment: .leading, spacing: 12) {
                 if let repository = model.selectedRepository {
@@ -119,7 +119,7 @@ private struct PhoneFolderPicker: View {
                     if await choose(browser.currentDirectory) { dismiss() }
                 }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue)
             .disabled(browser.isLoading || browser.errorMessage != nil)
             .keyboardShortcut(.defaultAction)
         }

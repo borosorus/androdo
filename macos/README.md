@@ -29,7 +29,7 @@ open dist/PhoneBackup.app
 
 The script builds the SwiftPM executable for `arm64-apple-macosx14.0`, packages
 only that executable and the app's `Info.plist`, and verifies its ad-hoc
-signature. It replaces only `dist/PhoneBackup.app`. It does not copy ADB,
+signature. It draws and packages an original app icon locally. It replaces only `dist/PhoneBackup.app`. It does not copy ADB,
 Python sources, backup repositories, or phone files into the bundle. The
 generated `dist/` directory is ignored by Git.
 
@@ -42,7 +42,8 @@ outside v1.
 
 PhoneBackup checks common Android SDK and Homebrew locations and the current
 `PATH`. If it cannot find ADB, select **Locate ADB…** in the app and choose the
-`adb` executable, commonly:
+`adb` executable from **PhoneBackup → Settings…** (or **Set Up Connection…**
+when ADB is missing), commonly:
 
 ```text
 /opt/homebrew/bin/adb
@@ -85,3 +86,18 @@ python3 -m pytest -q
 See [ACCEPTANCE.md](ACCEPTANCE.md) for automated and phone checks. Automated
 tests use fakes and temporary local folders; they do not require or enumerate a
 connected phone.
+
+## Visual design preview
+
+A standalone Overview composition uses fictional device/folder names and never
+creates an AppModel, opens a repository, or connects to a phone:
+
+```sh
+swiftc -parse-as-library Sources/PhoneBackupUI/PhoneBackupIdentity.swift Sources/PhoneBackupUI/DeviceBackupHero.swift macos/RenderDesignPreview.swift -o /private/tmp/phonebackup-design-preview
+/private/tmp/phonebackup-design-preview /private/tmp/phonebackup-overview-light.png
+/private/tmp/phonebackup-design-preview /private/tmp/phonebackup-overview-dark.png --dark
+```
+
+These are composition previews, not screenshots or interactive acceptance of
+the running app. Settings displays the packaged Git revision; a `-modified`
+suffix means it was built with uncommitted source changes.

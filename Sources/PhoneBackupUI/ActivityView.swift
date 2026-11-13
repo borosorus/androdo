@@ -5,10 +5,10 @@ struct ActivityView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AppPageHeader(title: "Activity", subtitle: "Session summaries for backups, restores, and file copies.")
+            AppPageHeader(title: "This session")
             Divider()
             if model.activityStore.records.isEmpty {
-                ContentUnavailableView("No activity yet", systemImage: "clock.arrow.circlepath", description: Text("Backups, restores, and file copies started in this session will appear here."))
+                ContentUnavailableView("No activity yet", systemImage: "clock.arrow.circlepath", description: Text("Backups, restores, and copies appear here while the app is open."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(model.activityStore.records) { record in
@@ -23,8 +23,6 @@ struct ActivityView: View {
                                     .font(.caption.weight(.medium)).padding(.horizontal, 7).padding(.vertical, 3)
                                     .background(color(for: record).opacity(0.12), in: Capsule())
                             }
-                            Text(record.safeSummary.isEmpty ? "Started \(record.startedAt.formatted(date: .abbreviated, time: .shortened))" : record.safeSummary)
-                                .font(.callout).foregroundStyle(.secondary)
                             Text("\(record.verifiedItems) verified · \(record.warningCount) warnings")
                                 .font(.caption).foregroundStyle(.secondary)
                         }

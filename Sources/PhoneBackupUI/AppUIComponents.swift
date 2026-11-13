@@ -11,15 +11,15 @@ struct AppPageHeader<Trailing: View>: View {
         self.trailing = trailing()
     }
 
-    init(title: String, subtitle: String) where Trailing == EmptyView {
+    init(title: String, subtitle: String = "") where Trailing == EmptyView {
         self.init(title: title, subtitle: subtitle) { EmptyView() }
     }
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.largeTitle.weight(.semibold))
-                Text(subtitle).foregroundStyle(.secondary)
+                Text(title).font(.title2.weight(.semibold))
+                if !subtitle.isEmpty { Text(subtitle).font(.callout).foregroundStyle(.secondary) }
             }
             Spacer(minLength: 12)
             trailing
@@ -52,7 +52,7 @@ struct ReviewSheetLayout<Content: View, Footer: View>: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.title2.weight(.semibold))
-                    Text(subtitle).foregroundStyle(.secondary)
+                    if !subtitle.isEmpty { Text(subtitle).font(.callout).foregroundStyle(.secondary) }
                 }
                 Spacer(minLength: 12)
             }
@@ -97,7 +97,9 @@ struct SummaryMetric: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Label(title, systemImage: symbol).font(.caption).foregroundStyle(.secondary)
+            Label { Text(title) } icon: {
+                Image(systemName: symbol).foregroundStyle(AppIdentity.teal)
+            }.font(.caption).foregroundStyle(.secondary)
             Text(value).font(.title2.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

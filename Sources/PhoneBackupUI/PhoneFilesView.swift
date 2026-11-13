@@ -56,7 +56,7 @@ struct PhoneFilesView: View {
                     TableColumn("Name") { entry in
                         HStack(spacing: 8) {
                             Image(systemName: entry.kind == .directory ? "folder.fill" : "doc")
-                                .foregroundStyle(entry.kind == .directory ? Color.accentColor : Color.secondary)
+                                .foregroundStyle(entry.kind == .directory ? AppIdentity.blue : Color.secondary)
                             Text(entry.name).lineLimit(1)
                                 .onTapGesture(count: 2) { if entry.kind == .directory { Task { await browser.open(entry) } } }
                                 .contextMenu {
@@ -100,7 +100,7 @@ struct PhoneFilesView: View {
 
             Divider()
             HStack(spacing: 10) {
-                Text("\(browser.selection.count) selected").font(.callout).foregroundStyle(.secondary)
+                Text(browser.selection.isEmpty ? "\(browser.entries.count) items" : "\(browser.selection.count) selected").font(.callout).foregroundStyle(.secondary)
                 Spacer()
                 if browser.selection.count == 1, let path = browser.selection.first,
                    let entry = browser.entries.first(where: { $0.path == path }),
@@ -112,7 +112,6 @@ struct PhoneFilesView: View {
                     .disabled(browser.selection.isEmpty || model.isBusy)
                 Button("Copy from Mac…") { chooseMacSources() }
                     .disabled(browser.device?.state != .device || model.isBusy)
-                    .buttonStyle(.borderedProminent)
             }.padding(16)
             if model.isPlanningCopy { ProgressView("Preparing file copy plan…").padding(.horizontal, 16).padding(.bottom, 10) }
         }

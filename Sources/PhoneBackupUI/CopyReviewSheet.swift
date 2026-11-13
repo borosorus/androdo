@@ -7,7 +7,7 @@ struct CopyReviewSheet: View {
 
     var body: some View {
         ReviewSheetLayout(title: "Review File Copy",
-                          subtitle: "The copy starts only after you confirm this plan.",
+                          subtitle: "",
                           minimumWidth: 700, minimumHeight: 460) {
             if let plan = model.copyPlan {
                 VStack(alignment: .leading, spacing: 18) {
@@ -46,7 +46,7 @@ struct CopyReviewSheet: View {
                 if model.isStartingOperation { ProgressView().controlSize(.small); Text("Starting…") }
                 else { Text("Copy") }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue)
             .disabled(!canCopy || model.isStartingOperation)
             .keyboardShortcut(.defaultAction)
         }
