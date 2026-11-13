@@ -205,6 +205,7 @@ public struct RestorePoint: Codable, Equatable, Sendable, Identifiable {
     public let id: RestorePointID
     public let createdAt: Date
     public let state: RestorePointState
+    public let selection: BackupSelection
     public let entryCount: Int
     public let totalBytes: Int64
     public let omissions: [OperationWarning]
@@ -213,6 +214,7 @@ public struct RestorePoint: Codable, Equatable, Sendable, Identifiable {
         id: RestorePointID = RestorePointID(),
         createdAt: Date,
         state: RestorePointState,
+        selection: BackupSelection = BackupSelection(),
         entryCount: Int,
         totalBytes: Int64,
         omissions: [OperationWarning] = []
@@ -220,9 +222,54 @@ public struct RestorePoint: Codable, Equatable, Sendable, Identifiable {
         self.id = id
         self.createdAt = createdAt
         self.state = state
+        self.selection = selection
         self.entryCount = entryCount
         self.totalBytes = totalBytes
         self.omissions = omissions
+    }
+}
+
+public struct ContentObjectReference: Codable, Equatable, Hashable, Sendable {
+    public let sha256: String
+    public let size: Int64
+
+    public init(sha256: String, size: Int64) {
+        self.sha256 = sha256
+        self.size = size
+    }
+}
+
+public struct RestorePointManifest: Codable, Equatable, Sendable {
+    public let id: RestorePointID
+    public let createdAt: Date
+    public let selection: BackupSelection
+    public let entries: [BackupEntry]
+    public let omissions: [OperationWarning]
+
+    public init(
+        id: RestorePointID = RestorePointID(),
+        createdAt: Date = Date(),
+        selection: BackupSelection,
+        entries: [BackupEntry],
+        omissions: [OperationWarning] = []
+    ) {
+        self.id = id
+        self.createdAt = createdAt
+        self.selection = selection
+        self.entries = entries
+        self.omissions = omissions
+    }
+}
+
+public struct RepositoryIntegrityReport: Codable, Equatable, Sendable {
+    public let restorePointsChecked: Int
+    public let objectsChecked: Int
+    public let totalBytes: Int64
+
+    public init(restorePointsChecked: Int, objectsChecked: Int, totalBytes: Int64) {
+        self.restorePointsChecked = restorePointsChecked
+        self.objectsChecked = objectsChecked
+        self.totalBytes = totalBytes
     }
 }
 
@@ -340,6 +387,8 @@ public enum RecoveryAction: String, Codable, Sendable {
     case chooseAccessiblePaths
     case chooseDestination
     case allowReplacement
+    case closeOtherRepository
+    case reconnectVolume
 }
 
 public enum EngineError: Error, Codable, Equatable, Sendable {
@@ -357,6 +406,11 @@ public enum EngineError: Error, Codable, Equatable, Sendable {
     case sourceChanged(RemotePath)
     case insufficientSpace
     case corruptedRepository(String)
+    case repositoryBusy(URL)
+    case repositoryDeviceMismatch(RepositoryID)
+    case repositoryUnavailable(URL)
+    case repositoryFormatUnsupported(Int)
+    case repositoryIO(String)
     case transport(String)
 
     public var recoveryActions: [RecoveryAction] {
@@ -367,6 +421,11 @@ public enum EngineError: Error, Codable, Equatable, Sendable {
         case .notDirectory: [.chooseAccessiblePaths]
         case .adbUnavailable: [.locateADB]
         case .operationTimedOut: [.retry]
+        case .repositoryBusy: [.closeOtherRepository, .retry]
+        case .repositoryDeviceMismatch: [.chooseDestination]
+        case .repositoryUnavailable: [.reconnectVolume, .retry]
+        case .repositoryFormatUnsupported: [.retry]
+        case .repositoryIO: [.retry, .chooseDestination]
         case .destinationConflict(let conflict):
             conflict.kind == .fileExists ? [.allowReplacement] : [.chooseDestination]
         case .sourceChanged: [.retry]

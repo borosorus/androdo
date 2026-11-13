@@ -21,7 +21,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 0 — Create the feature branch and establish the Swift project shell. Commit: `chore(macOS): scaffold Swift app and engine`. Review: approved, no code blockers; follow-up notes addressed.
 - [x] Step 1 — Define Swift engine models, protocols, and fake transport. Commit: `feat(engine): define backup and device contracts`. Review: approved; byte-exact path identity, explicit shared-storage scope, and safe conflict recovery covered.
 - [x] Step 2 — Implement ADB discovery, path-safe transport, and lazy browsing. Commit: `feat(adb): add device transport and lazy browsing`. Review: approved after fixes for ADB shell argument quoting, `/sdcard` symlink traversal, process-output draining, and structured disconnect errors.
-- [ ] Step 3 — Implement the local backup repository and immutable restore points.
+- [x] Step 3 — Implement the local backup repository and immutable restore points. Commit: `feat(repository): add durable snapshot storage`. Review: approved after fixes for stable per-open volume identity, copied repository IDs, and filesystem-compatible exclusive publication.
 - [ ] Step 4 — Implement selective backup planning, execution, progress, and recovery.
 - [ ] Step 5 — Implement verification and safe local/phone restore.
 - [ ] Step 6 — Implement direct file copy in both directions.
@@ -74,6 +74,8 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 **Checks:** Repository create/open, transaction interruption, object deduplication, corruption detection, restore-point browsing, disk-full/external-volume failure, and concurrent-writer tests.
 
 **Review:** Confirm completed restore points are immutable, objects are published only after verification, and metadata recovery cannot expose a partial point as complete.
+
+**Complete:** Added per-device SQLite repositories, private object/staging folders, streaming SHA-256 imports with exclusive atomic publication, deduplication, immutable complete-point metadata, UTF-8 BLOB path indexes, offline browsing, integrity verification, nonblocking repository locks, and volume/device checks. `swift test` passes (28 tests); `git diff --check` passes. Triggered SQLite rollback and `SQLITE_FULL` cases are covered. Abrupt process termination and FAT/exFAT or external-volume reconnect behavior were not exercised on hardware/filesystems; user-selected location bookmarks and missing-mount detection across app relaunch remain for UI integration.
 
 ### Step 4 — Selection, planning, backup execution, and recovery
 
