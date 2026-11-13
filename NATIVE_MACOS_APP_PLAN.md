@@ -75,7 +75,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 **Review:** Confirm completed restore points are immutable, objects are published only after verification, and metadata recovery cannot expose a partial point as complete.
 
-**Complete:** Added per-device SQLite repositories, private object/staging folders, streaming SHA-256 imports with exclusive atomic publication, deduplication, immutable complete-point metadata, UTF-8 BLOB path indexes, offline browsing, integrity verification, nonblocking repository locks, and volume/device checks. `swift test` passes (28 tests); `git diff --check` passes. Triggered SQLite rollback and `SQLITE_FULL` cases are covered. Abrupt process termination and FAT/exFAT or external-volume reconnect behavior were not exercised on hardware/filesystems; user-selected location bookmarks and missing-mount detection across app relaunch remain for UI integration.
+**Complete:** Added per-device SQLite repositories, private object/staging folders, streaming SHA-256 imports with exclusive atomic publication, deduplication, immutable complete-point metadata, UTF-8 BLOB path indexes, offline browsing, integrity verification, nonblocking repository locks, and volume/device checks. `swift test` passed (28 tests); `git diff --check` passed. Triggered SQLite rollback and `SQLITE_FULL` cases are covered. Abrupt process termination and FAT/exFAT or external-volume reconnect behavior were not exercised on hardware/filesystems; user-selected location bookmarks and missing-mount detection across app relaunch remain for UI integration.
 
 ### Step 4 — Selection, planning, backup execution, and recovery
 
@@ -83,9 +83,11 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 **Commit:** `feat(backup): add scoped snapshot operations`
 
-**Checks:** Selection include/exclude behavior; first and unchanged backups; add/change/delete behavior across restore points; inaccessible and missing selected roots; source changes during transfer; cancellation, disconnect, retry, and resume tests.
+**Checks:** Selection include/exclude behavior; first and unchanged backups; deletion behavior; inaccessible paths and stale omission approval; source mutation during transfer; durable checkpoint and interrupted-attempt recovery; ADB metadata parsing. Full `swift test` passed (35 tests); `git diff --check` passed.
 
-**Review:** Confirm no folder is selected implicitly, a denied path cannot silently yield a complete point, and the last completed point remains current until the next point commits.
+**Review:** Confirmed selected roots are explicit, an inaccessible path cannot silently yield a complete point, a retry that discovers different omissions requires another decision, and the last completed point remains current until atomic publication. Review also led to bounded event replay, cancellable hashing/publication, and linear progress accounting.
+
+**Complete:** Implemented scoped planning and backup execution, incremental object reuse after verification, durable attempts/checkpoints and resume, atomic restore-point publication, and explicit incomplete/omission decisions. The suite covers the checks above. Engine-level cancellation, disconnect, and execution-resume behavior still need dedicated tests; durable checkpoint survival across reopen is covered. Device hardware execution remains a later acceptance step.
 
 ### Step 5 — Restore and local verification
 

@@ -95,6 +95,37 @@ final class LocalBackupRepositoryTests: XCTestCase {
         XCTAssertEqual(afterRelease, [repository])
     }
 
+    func testInterruptedAttemptAndVerifiedCheckpointSurviveRepositoryReopen() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let device = try testDevice("pixel-resume")
+        let store = LocalBackupRepositoryStore()
+        let repository = try await store.openOrCreateRepository(in: root, for: device)
+        let selection = BackupSelection(scope: .selected([try RemotePath("/sdcard/Pictures")]))
+        let attempt = try await store.beginBackupAttempt(in: repository.id, device: device.id, selection: selection)
+        let bytes = Data("checkpoint bytes".utf8)
+        let reference = try await store.importFile(from: try write(bytes, under: root),
+                                                   expectedSize: Int64(bytes.count), into: repository.id)
+        let path = try RemotePath("/sdcard/Pictures/photo.jpg")
+        try await store.saveCheckpoint(
+            BackupCheckpoint(path: path, size: reference.size, modifiedAt: Date(timeIntervalSince1970: 10),
+                             contentHash: reference.sha256), for: attempt.id, in: repository.id
+        )
+        try await store.closeRepository(repository.id)
+
+        let reopenedStore = LocalBackupRepositoryStore()
+        _ = try await reopenedStore.openRepositories(in: root)
+        let attempts = try await reopenedStore.backupAttempts(in: repository.id)
+        let recoveredAttempt = try XCTUnwrap(attempts.first)
+        XCTAssertEqual(recoveredAttempt.id, attempt.id)
+        XCTAssertEqual(recoveredAttempt.state, .interrupted)
+        XCTAssertEqual(recoveredAttempt.checkpointCount, 1)
+        let checkpoints = try await reopenedStore.checkpoints(for: attempt.id, in: repository.id)
+        XCTAssertEqual(checkpoints, [BackupCheckpoint(path: path, size: reference.size,
+                                                       modifiedAt: Date(timeIntervalSince1970: 10),
+                                                       contentHash: reference.sha256)])
+    }
+
     func testCorruptObjectAndInvalidManifestAreRejectedWithoutPublishingPartialPoint() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

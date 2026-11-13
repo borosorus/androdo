@@ -240,6 +240,36 @@ public actor ADBTransport: DeviceTransport, RemoteFileAccess {
         return try Self.parseImmediateChildren(output, parent: path)
     }
 
+    public func metadata(of path: RemotePath, on device: DeviceID) async throws -> RemoteEntry {
+        let remoteCommand = "find -H \(Self.shellQuote(path.description)) -mindepth 0 -maxdepth 0 -printf \(Self.shellQuote(Self.findFormat))"
+        let output = try await command(["-s", device.serial, "shell", remoteCommand], path: path, device: device)
+        guard output.last == 0,
+              let record = output.split(separator: 0, omittingEmptySubsequences: true).first,
+              let line = String(data: Data(record), encoding: .utf8) else {
+            throw EngineError.missingPath(path)
+        }
+        let fields = line.split(separator: "|", maxSplits: 3, omittingEmptySubsequences: false)
+        guard fields.count == 4,
+              let mode = fields[0].first,
+              let size = Int64(fields[1]),
+              let modifiedSeconds = Double(fields[2]) else {
+            throw EngineError.transport("ADB returned invalid path metadata")
+        }
+        let listedPath: RemotePath
+        do { listedPath = try RemotePath(String(fields[3])) }
+        catch { throw EngineError.transport("ADB returned an invalid device path") }
+        guard listedPath == path else { throw EngineError.missingPath(path) }
+        let kind: RemoteEntryKind
+        switch mode {
+        case "d": kind = .directory
+        case "-": kind = .file
+        case "l": kind = .symbolicLink
+        default: kind = .other
+        }
+        return RemoteEntry(path: path, kind: kind, size: kind == .file ? size : nil,
+                           modifiedAt: Date(timeIntervalSince1970: modifiedSeconds))
+    }
+
     public func pull(from path: RemotePath, on device: DeviceID, to localURL: URL) async throws {
         _ = try await command(["-s", device.serial, "pull", path.description, localURL.path], path: path, device: device)
     }

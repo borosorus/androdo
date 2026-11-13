@@ -1,10 +1,32 @@
 import Foundation
 import CryptoKit
 
+public enum FakeDeviceOperation: Hashable, Sendable {
+    case children
+    case metadata
+    case pull
+}
+
+private struct FakeDeviceFailureKey: Hashable {
+    let operation: FakeDeviceOperation
+    let path: RemotePath
+}
+
+private struct FakePullMutation {
+    let path: RemotePath
+    let entry: RemoteEntry
+    let data: Data
+}
+
 public actor FakeDeviceTransport: DeviceTransport, RemoteFileAccess {
     private var devices: [AndroidDevice]
     private var entries: [DeviceID: [RemoteEntry]] = [:]
     private var fileData: [DeviceID: [RemotePath: Data]] = [:]
+    private var directories: [DeviceID: Set<RemotePath>] = [:]
+    private var failures: [FakeDeviceFailureKey: [EngineError]] = [:]
+    private var mutationsAfterPull: [DeviceID: [FakePullMutation]] = [:]
+    private var pullCalls: [DeviceID: [RemotePath]] = [:]
+    private var childrenCalls: [DeviceID: [RemotePath]] = [:]
 
     public init(devices: [AndroidDevice] = []) {
         self.devices = devices
@@ -17,9 +39,37 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteFileAccess {
     public func seed(_ entry: RemoteEntry, on device: DeviceID, data: Data? = nil) {
         entries[device, default: []].removeAll { $0.path == entry.path }
         entries[device, default: []].append(entry)
+        if entry.kind == .directory { directories[device, default: []].insert(entry.path) }
+        var parent = entry.path.parent
+        while let value = parent {
+            directories[device, default: []].insert(value)
+            if !entries[device, default: []].contains(where: { $0.path == value }) {
+                entries[device, default: []].append(RemoteEntry(path: value, kind: .directory, size: nil))
+            }
+            parent = value.parent
+        }
         entries[device, default: []].sort { RemotePath.bytewiseLess($0.path, $1.path) }
         if let data { fileData[device, default: [:]][entry.path] = data }
     }
+
+    public func remove(_ path: RemotePath, on device: DeviceID) {
+        entries[device, default: []].removeAll { $0.path.isEqualOrDescendant(of: path) }
+        fileData[device, default: [:]].keys.filter { $0.isEqualOrDescendant(of: path) }.forEach {
+            fileData[device, default: [:]].removeValue(forKey: $0)
+        }
+        directories[device, default: []].subtract(directories[device, default: []].filter { $0.isEqualOrDescendant(of: path) })
+    }
+
+    public func failNext(_ error: EngineError, operation: FakeDeviceOperation, at path: RemotePath, on device: DeviceID) {
+        failures[FakeDeviceFailureKey(operation: operation, path: path), default: []].append(error)
+    }
+
+    public func mutateAfterNextPull(_ entry: RemoteEntry, data: Data, on device: DeviceID) {
+        mutationsAfterPull[device, default: []].append(FakePullMutation(path: entry.path, entry: entry, data: data))
+    }
+
+    public func recordedPulls(on device: DeviceID) -> [RemotePath] { pullCalls[device, default: []] }
+    public func recordedChildrenCalls(on device: DeviceID) -> [RemotePath] { childrenCalls[device, default: []] }
 
     public func connectedDevices() async throws -> [AndroidDevice] {
         devices
@@ -29,17 +79,37 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteFileAccess {
         guard devices.contains(where: { $0.id == device && $0.state == .device }) else {
             throw EngineError.deviceUnavailable(device)
         }
+        try throwNextFailure(.children, path: path)
+        childrenCalls[device, default: []].append(path)
+        guard path == .root || directories[device, default: []].contains(path) else { throw EngineError.missingPath(path) }
         return entries[device, default: []]
             .filter { $0.path.parent == path }
             .sorted { RemotePath.bytewiseLess($0.path, $1.path) }
+    }
+
+    public func metadata(of path: RemotePath, on device: DeviceID) async throws -> RemoteEntry {
+        guard devices.contains(where: { $0.id == device && $0.state == .device }) else {
+            throw EngineError.deviceUnavailable(device)
+        }
+        try throwNextFailure(.metadata, path: path)
+        guard let entry = entries[device, default: []].first(where: { $0.path == path }) else {
+            throw EngineError.missingPath(path)
+        }
+        return entry
     }
 
     public func pull(from path: RemotePath, on device: DeviceID, to localURL: URL) async throws {
         guard devices.contains(where: { $0.id == device && $0.state == .device }) else {
             throw EngineError.deviceUnavailable(device)
         }
+        try throwNextFailure(.pull, path: path)
         guard let data = fileData[device]?[path] else { throw EngineError.inaccessiblePath(path) }
+        pullCalls[device, default: []].append(path)
         try data.write(to: localURL, options: .atomic)
+        if let index = mutationsAfterPull[device]?.firstIndex(where: { $0.path == path }) {
+            let mutation = mutationsAfterPull[device]!.remove(at: index)
+            seed(mutation.entry, on: device, data: mutation.data)
+        }
     }
 
     public func push(from localURL: URL, to path: RemotePath, on device: DeviceID) async throws {
@@ -52,11 +122,25 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteFileAccess {
         entries[device, default: []].removeAll { $0.path == path }
         entries[device, default: []].append(entry)
     }
+
+    private func throwNextFailure(_ operation: FakeDeviceOperation, path: RemotePath) throws {
+        let key = FakeDeviceFailureKey(operation: operation, path: path)
+        guard var values = failures[key], !values.isEmpty else { return }
+        let error = values.removeFirst()
+        failures[key] = values
+        throw error
+    }
 }
 
 public actor FakeBackupRepositoryStore: BackupRepositoryWriting {
+    private struct StoredAttempt {
+        var metadata: BackupAttempt
+        var checkpoints: [RemotePath: BackupCheckpoint]
+    }
+
     private var stored: [RepositoryID: (BackupRepositoryInfo, [RestorePoint], [RestorePointID: [BackupEntry]])] = [:]
     private var objects: [RepositoryID: [String: Data]] = [:]
+    private var attempts: [BackupAttemptID: StoredAttempt] = [:]
 
     public init() {}
 
@@ -81,6 +165,65 @@ public actor FakeBackupRepositoryStore: BackupRepositoryWriting {
     }
 
     public func closeRepository(_ repository: RepositoryID) async throws {}
+
+    public func verifyObject(_ reference: ContentObjectReference, in repository: RepositoryID) async throws {
+        guard let data = objects[repository]?[reference.sha256], Int64(data.count) == reference.size,
+              SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == reference.sha256 else {
+            throw EngineError.corruptedRepository("Content object verification failed")
+        }
+    }
+
+    public func backupAttempts(in repository: RepositoryID) async throws -> [BackupAttempt] {
+        attempts.values.map(\.metadata).filter { $0.repository == repository }.sorted { $0.startedAt > $1.startedAt }
+    }
+
+    public func beginBackupAttempt(in repository: RepositoryID, device: DeviceID, selection: BackupSelection) async throws -> BackupAttempt {
+        guard let value = stored[repository], value.0.deviceID == device else {
+            throw EngineError.repositoryDeviceMismatch(repository)
+        }
+        let attempt = BackupAttempt(id: BackupAttemptID(), repository: repository, device: device, selection: selection,
+                                   startedAt: Date(), state: .running, omissions: [], checkpointCount: 0)
+        attempts[attempt.id] = StoredAttempt(metadata: attempt, checkpoints: [:])
+        return attempt
+    }
+
+    public func backupAttempt(_ attempt: BackupAttemptID, in repository: RepositoryID) async throws -> BackupAttempt {
+        guard let value = attempts[attempt], value.metadata.repository == repository else {
+            throw EngineError.corruptedRepository("Unknown backup attempt")
+        }
+        return value.metadata
+    }
+
+    public func checkpoints(for attempt: BackupAttemptID, in repository: RepositoryID) async throws -> [BackupCheckpoint] {
+        guard let value = attempts[attempt], value.metadata.repository == repository else {
+            throw EngineError.corruptedRepository("Unknown backup attempt")
+        }
+        return value.checkpoints.values.sorted { RemotePath.bytewiseLess($0.path, $1.path) }
+    }
+
+    public func saveCheckpoint(_ checkpoint: BackupCheckpoint, for attempt: BackupAttemptID, in repository: RepositoryID) async throws {
+        try await verifyObject(ContentObjectReference(sha256: checkpoint.contentHash, size: checkpoint.size), in: repository)
+        guard var value = attempts[attempt], value.metadata.repository == repository else {
+            throw EngineError.corruptedRepository("Unknown backup attempt")
+        }
+        value.checkpoints[checkpoint.path] = checkpoint
+        value.metadata = BackupAttempt(id: value.metadata.id, repository: repository, device: value.metadata.device,
+                                       selection: value.metadata.selection, startedAt: value.metadata.startedAt,
+                                       state: value.metadata.state, omissions: value.metadata.omissions,
+                                       checkpointCount: value.checkpoints.count)
+        attempts[attempt] = value
+    }
+
+    public func updateBackupAttempt(_ attempt: BackupAttemptID, in repository: RepositoryID,
+                                    state: BackupAttemptState, omissions: [OperationWarning]) async throws {
+        guard var value = attempts[attempt], value.metadata.repository == repository else {
+            throw EngineError.corruptedRepository("Unknown backup attempt")
+        }
+        value.metadata = BackupAttempt(id: value.metadata.id, repository: repository, device: value.metadata.device,
+                                       selection: value.metadata.selection, startedAt: value.metadata.startedAt,
+                                       state: state, omissions: omissions, checkpointCount: value.checkpoints.count)
+        attempts[attempt] = value
+    }
 
     public func importFile(from localURL: URL, expectedSize: Int64, into repository: RepositoryID) async throws -> ContentObjectReference {
         guard stored[repository] != nil else { throw EngineError.corruptedRepository("Unknown repository") }
@@ -107,6 +250,18 @@ public actor FakeBackupRepositoryStore: BackupRepositoryWriting {
         value.1.append(point)
         value.2[point.id] = manifest.entries
         stored[repository] = value
+        return point
+    }
+
+    public func publish(_ manifest: RestorePointManifest, in repository: RepositoryID,
+                        completing attempt: BackupAttemptID) async throws -> RestorePoint {
+        guard let storedAttempt = attempts[attempt], storedAttempt.metadata.repository == repository,
+              storedAttempt.metadata.selection == manifest.selection,
+              storedAttempt.metadata.omissions == manifest.omissions else {
+            throw EngineError.corruptedRepository("Attempt does not match restore point")
+        }
+        let point = try await publish(manifest, in: repository)
+        attempts.removeValue(forKey: attempt)
         return point
     }
 

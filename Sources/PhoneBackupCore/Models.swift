@@ -110,6 +110,13 @@ public struct RemotePath: Codable, Hashable, Sendable, CustomStringConvertible {
         try RemotePath(components: components + [component])
     }
 
+    public func isEqualOrDescendant(of ancestor: RemotePath) -> Bool {
+        guard ancestor.components.count <= components.count else { return false }
+        return zip(components, ancestor.components).allSatisfy {
+            Array($0.utf8) == Array($1.utf8)
+        }
+    }
+
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         try self.init(container.decode(String.self))
@@ -170,6 +177,120 @@ public struct BackupSelection: Codable, Equatable, Sendable {
         if case .allSharedStorage = scope { return excludedRoots.isEmpty }
         return false
     }
+
+    public func includes(_ path: RemotePath) -> Bool {
+        guard !excludedRoots.contains(where: { path.isEqualOrDescendant(of: $0) }) else { return false }
+        switch scope {
+        case .allSharedStorage:
+            return path.isEqualOrDescendant(of: try! RemotePath("/sdcard"))
+        case .selected(let roots):
+            return roots.contains(where: { path.isEqualOrDescendant(of: $0) })
+        }
+    }
+
+    public var normalizedRoots: [RemotePath] {
+        let roots: [RemotePath]
+        switch scope {
+        case .allSharedStorage: roots = [try! RemotePath("/sdcard")]
+        case .selected(let selected): roots = selected
+        }
+        return roots.filter { candidate in
+            !roots.contains(where: { $0 != candidate && candidate.isEqualOrDescendant(of: $0) })
+        }.sorted(by: RemotePath.bytewiseLess)
+    }
+}
+
+public struct BackupPlanID: Codable, Hashable, Sendable, Identifiable {
+    public let id: UUID
+    public init(_ id: UUID = UUID()) { self.id = id }
+}
+
+public struct BackupPlan: Codable, Equatable, Sendable, Identifiable {
+    public let id: BackupPlanID
+    public let repository: RepositoryID
+    public let device: DeviceID
+    public let selection: BackupSelection
+    public let scannedAt: Date
+    public let directoryCount: Int
+    public let fileCount: Int
+    public let transferCount: Int
+    public let reusedCount: Int
+    public let deletedCount: Int
+    public let bytesToTransfer: Int64
+    public let totalBytes: Int64
+    public let omissions: [OperationWarning]
+
+    public init(id: BackupPlanID = BackupPlanID(), repository: RepositoryID, device: DeviceID,
+                selection: BackupSelection, scannedAt: Date, directoryCount: Int, fileCount: Int,
+                transferCount: Int, reusedCount: Int, deletedCount: Int, bytesToTransfer: Int64,
+                totalBytes: Int64, omissions: [OperationWarning]) {
+        self.id = id
+        self.repository = repository
+        self.device = device
+        self.selection = selection
+        self.scannedAt = scannedAt
+        self.directoryCount = directoryCount
+        self.fileCount = fileCount
+        self.transferCount = transferCount
+        self.reusedCount = reusedCount
+        self.deletedCount = deletedCount
+        self.bytesToTransfer = bytesToTransfer
+        self.totalBytes = totalBytes
+        self.omissions = omissions
+    }
+}
+
+public struct BackupAttemptID: Codable, Hashable, Sendable, Identifiable {
+    public let id: UUID
+    public init(_ id: UUID = UUID()) { self.id = id }
+}
+
+public enum BackupAttemptState: String, Codable, Sendable {
+    case running
+    case interrupted
+    case needsOmissionDecision
+}
+
+public struct BackupAttempt: Codable, Equatable, Sendable, Identifiable {
+    public let id: BackupAttemptID
+    public let repository: RepositoryID
+    public let device: DeviceID
+    public let selection: BackupSelection
+    public let startedAt: Date
+    public let state: BackupAttemptState
+    public let omissions: [OperationWarning]
+    public let checkpointCount: Int
+
+    public init(id: BackupAttemptID, repository: RepositoryID, device: DeviceID, selection: BackupSelection,
+                startedAt: Date, state: BackupAttemptState, omissions: [OperationWarning], checkpointCount: Int) {
+        self.id = id
+        self.repository = repository
+        self.device = device
+        self.selection = selection
+        self.startedAt = startedAt
+        self.state = state
+        self.omissions = omissions
+        self.checkpointCount = checkpointCount
+    }
+}
+
+public struct BackupCheckpoint: Codable, Equatable, Sendable {
+    public let path: RemotePath
+    public let size: Int64
+    public let modifiedAt: Date?
+    public let contentHash: String
+
+    public init(path: RemotePath, size: Int64, modifiedAt: Date?, contentHash: String) {
+        self.path = path
+        self.size = size
+        self.modifiedAt = modifiedAt
+        self.contentHash = contentHash
+    }
+}
+
+public enum BackupOmissionChoice: Equatable, Sendable {
+    case requireComplete
+    case finishWithOmissions
 }
 
 public struct RepositoryID: Codable, Hashable, Sendable, Identifiable {
@@ -360,10 +481,12 @@ public struct OperationProgress: Codable, Equatable, Sendable {
     }
 }
 
-public enum WarningCode: String, Codable, Sendable {
+public enum WarningCode: String, Codable, Hashable, Sendable {
     case inaccessiblePath
     case unsupportedFilename
     case sourceChanged
+    case missingPath
+    case unsupportedEntryKind
 }
 
 public struct OperationWarning: Codable, Equatable, Sendable, Identifiable {
@@ -411,6 +534,7 @@ public enum EngineError: Error, Codable, Equatable, Sendable {
     case repositoryUnavailable(URL)
     case repositoryFormatUnsupported(Int)
     case repositoryIO(String)
+    case emptySelection
     case transport(String)
 
     public var recoveryActions: [RecoveryAction] {
@@ -426,6 +550,7 @@ public enum EngineError: Error, Codable, Equatable, Sendable {
         case .repositoryUnavailable: [.reconnectVolume, .retry]
         case .repositoryFormatUnsupported: [.retry]
         case .repositoryIO: [.retry, .chooseDestination]
+        case .emptySelection: [.chooseAccessiblePaths]
         case .destinationConflict(let conflict):
             conflict.kind == .fileExists ? [.allowReplacement] : [.chooseDestination]
         case .sourceChanged: [.retry]

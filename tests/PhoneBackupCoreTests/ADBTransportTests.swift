@@ -52,6 +52,24 @@ final class ADBTransportTests: XCTestCase {
         XCTAssertEqual(Set(entries.map(\.path)), Set([first, second]))
     }
 
+    func testMetadataReadsSingleSelectedEntry() async throws {
+        let path = try RemotePath("/sdcard/Dad's Pictures/image.jpg")
+        let runner = StubCommandRunner(outputs: [CommandOutput(
+            data: record("-rw-rw----", 42, "1001.5", path), exitCode: 0
+        )])
+        let transport = try makeTransport(runner: runner)
+        let device = try DeviceID(serial: "phone-1")
+
+        let entry = try await transport.metadata(of: path, on: device)
+
+        XCTAssertEqual(entry, RemoteEntry(path: path, kind: .file, size: 42,
+                                          modifiedAt: Date(timeIntervalSince1970: 1001.5)))
+        let calls = await runner.arguments()
+        XCTAssertEqual(Array(calls[0].prefix(3)), ["-s", "phone-1", "shell"])
+        XCTAssertTrue(calls[0].last?.contains("-maxdepth 0") == true)
+        XCTAssertTrue(calls[0].last?.contains("'\\''") == true)
+    }
+
     func testPermissionDeniedListingIsStructuredForThatPath() async throws {
         let path = try RemotePath("/sdcard/Android/data")
         let runner = StubCommandRunner(outputs: [CommandOutput(data: Data("find: /sdcard/Android/data: Permission denied".utf8), exitCode: 1)])

@@ -188,13 +188,16 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
             var hasher = SHA256()
             var copied: Int64 = 0
             while let chunk = try input.read(upToCount: 1024 * 1024), !chunk.isEmpty {
+                try Task.checkCancellation()
                 copied += Int64(chunk.count)
                 guard copied <= expectedSize else { throw EngineError.repositoryIO("Source file changed during import") }
                 hasher.update(data: chunk)
                 try output.write(contentsOf: chunk)
             }
+            try Task.checkCancellation()
             guard copied == expectedSize else { throw EngineError.repositoryIO("Source file changed during import") }
             try output.synchronize()
+            try Task.checkCancellation()
             try output.close()
 
             let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
@@ -213,23 +216,165 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
                 try Self.syncDirectory(objectURL.deletingLastPathComponent())
                 try Self.syncDirectory(objectURL.deletingLastPathComponent().deletingLastPathComponent())
             } else if errno == EEXIST {
-                try Self.verifyObject(at: objectURL, reference: reference)
+                try await Self.verifyObjectCancellable(at: objectURL, reference: reference)
                 _ = staging.path.withCString { Darwin.unlink($0) }
                 keepStaging = false
             } else {
                 throw Self.posixFailure(errno, location: objectURL)
             }
             return reference
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw Self.mapRepositoryError(error, location: handle.info.location)
+        }
+    }
+
+    public func verifyObject(_ reference: ContentObjectReference, in repository: RepositoryID) async throws {
+        let handle = try requireOpen(repository)
+        do {
+            try ensureMounted(handle)
+            try await Self.verifyObjectCancellable(at: objectURL(for: reference.sha256, repository: handle.info.location), reference: reference)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw Self.mapRepositoryError(error, location: handle.info.location)
+        }
+    }
+
+    public func backupAttempts(in repository: RepositoryID) async throws -> [BackupAttempt] {
+        let handle = try requireOpen(repository)
+        do {
+            return try handle.database.rows(
+                "SELECT id, repository_id, device_serial, selection, started_at, state, omissions, (SELECT COUNT(*) FROM attempt_entries WHERE attempt_id = attempts.id) FROM attempts WHERE repository_id = ? ORDER BY started_at DESC",
+                bindings: [.text(repository.id.uuidString)]
+            ) { try Self.decodeAttempt($0) }
+        } catch {
+            throw Self.mapRepositoryError(error, location: handle.info.location)
+        }
+    }
+
+    public func beginBackupAttempt(in repository: RepositoryID, device: DeviceID, selection: BackupSelection) async throws -> BackupAttempt {
+        let handle = try requireOpen(repository)
+        guard handle.info.deviceID == device else { throw EngineError.repositoryDeviceMismatch(repository) }
+        let id = BackupAttemptID()
+        let startedAt = Date()
+        do {
+            let selectionData = try JSONEncoder().encode(selection)
+            let omissionsData = try JSONEncoder().encode([OperationWarning]())
+            try handle.database.execute(
+                "INSERT INTO attempts(id, repository_id, device_serial, selection, started_at, state, omissions) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                bindings: [.text(id.id.uuidString), .text(repository.id.uuidString), .text(device.serial),
+                           .blob(selectionData), .real(startedAt.timeIntervalSince1970), .text(BackupAttemptState.running.rawValue),
+                           .blob(omissionsData)]
+            )
+            return BackupAttempt(id: id, repository: repository, device: device, selection: selection,
+                                 startedAt: startedAt, state: .running, omissions: [], checkpointCount: 0)
+        } catch {
+            throw Self.mapRepositoryError(error, location: handle.info.location)
+        }
+    }
+
+    public func backupAttempt(_ attempt: BackupAttemptID, in repository: RepositoryID) async throws -> BackupAttempt {
+        let handle = try requireOpen(repository)
+        do {
+            let records = try handle.database.rows(
+                "SELECT id, repository_id, device_serial, selection, started_at, state, omissions, (SELECT COUNT(*) FROM attempt_entries WHERE attempt_id = attempts.id) FROM attempts WHERE id = ? AND repository_id = ?",
+                bindings: [.text(attempt.id.uuidString), .text(repository.id.uuidString)]
+            ) { try Self.decodeAttempt($0) }
+            guard let value = records.first else { throw EngineError.corruptedRepository("Unknown backup attempt") }
+            return value
+        } catch {
+            throw Self.mapRepositoryError(error, location: handle.info.location)
+        }
+    }
+
+    public func checkpoints(for attempt: BackupAttemptID, in repository: RepositoryID) async throws -> [BackupCheckpoint] {
+        let handle = try requireOpen(repository)
+        do {
+            _ = try await backupAttempt(attempt, in: repository)
+            return try handle.database.rows(
+                "SELECT path, size, modified_at, content_hash FROM attempt_entries WHERE attempt_id = ?",
+                bindings: [.text(attempt.id.uuidString)]
+            ) { statement in
+                guard let pathBytes = sqliteBlob(statement, 0), let pathText = String(data: pathBytes, encoding: .utf8),
+                      let path = try? RemotePath(pathText), let hash = sqliteText(statement, 3) else {
+                    throw EngineError.corruptedRepository("Invalid backup checkpoint")
+                }
+                let modified = sqlite3_column_type(statement, 2) == SQLITE_NULL
+                    ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 2))
+                return BackupCheckpoint(path: path, size: sqlite3_column_int64(statement, 1), modifiedAt: modified, contentHash: hash)
+            }.sorted { RemotePath.bytewiseLess($0.path, $1.path) }
+        } catch {
+            throw Self.mapRepositoryError(error, location: handle.info.location)
+        }
+    }
+
+    public func saveCheckpoint(_ checkpoint: BackupCheckpoint, for attempt: BackupAttemptID, in repository: RepositoryID) async throws {
+        let handle = try requireOpen(repository)
+        do {
+            _ = try await backupAttempt(attempt, in: repository)
+            let reference = ContentObjectReference(sha256: checkpoint.contentHash, size: checkpoint.size)
+            try await verifyObject(reference, in: repository)
+            try handle.database.transaction {
+                try handle.database.execute("INSERT OR IGNORE INTO objects(sha256, size) VALUES(?, ?)",
+                                            bindings: [.text(checkpoint.contentHash), .integer(checkpoint.size)])
+                try handle.database.execute(
+                    "INSERT OR REPLACE INTO attempt_entries(attempt_id, path, size, modified_at, content_hash) VALUES(?, ?, ?, ?, ?)",
+                    bindings: [.text(attempt.id.uuidString), .blob(Self.pathBytes(checkpoint.path)), .integer(checkpoint.size),
+                               checkpoint.modifiedAt.map { .real($0.timeIntervalSince1970) } ?? .null, .text(checkpoint.contentHash)]
+                )
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw Self.mapRepositoryError(error, location: handle.info.location)
+        }
+    }
+
+    public func updateBackupAttempt(_ attempt: BackupAttemptID, in repository: RepositoryID,
+                                    state: BackupAttemptState, omissions: [OperationWarning]) async throws {
+        let handle = try requireOpen(repository)
+        do {
+            let data = try JSONEncoder().encode(omissions)
+            let count = try handle.database.execute(
+                "UPDATE attempts SET state = ?, omissions = ? WHERE id = ? AND repository_id = ?",
+                bindings: [.text(state.rawValue), .blob(data), .text(attempt.id.uuidString), .text(repository.id.uuidString)]
+            )
+            guard count == 1 else { throw EngineError.corruptedRepository("Unknown backup attempt") }
         } catch {
             throw Self.mapRepositoryError(error, location: handle.info.location)
         }
     }
 
     public func publish(_ manifest: RestorePointManifest, in repository: RepositoryID) async throws -> RestorePoint {
+        try await publishManifest(manifest, in: repository, completing: nil)
+    }
+
+    public func publish(_ manifest: RestorePointManifest, in repository: RepositoryID,
+                        completing attempt: BackupAttemptID) async throws -> RestorePoint {
+        try await publishManifest(manifest, in: repository, completing: attempt)
+    }
+
+    private func publishManifest(_ manifest: RestorePointManifest, in repository: RepositoryID,
+                                 completing attempt: BackupAttemptID?) async throws -> RestorePoint {
         let handle = try requireOpen(repository)
         do {
             try ensureMounted(handle)
-            let totalBytes = try validate(manifest, repository: handle.info.location)
+            if let attempt {
+                let attemptRows = try handle.database.rows(
+                    "SELECT id, repository_id, device_serial, selection, started_at, state, omissions, (SELECT COUNT(*) FROM attempt_entries WHERE attempt_id = attempts.id) FROM attempts WHERE id = ? AND repository_id = ?",
+                    bindings: [.text(attempt.id.uuidString), .text(repository.id.uuidString)]
+                ) { try Self.decodeAttempt($0) }
+                guard let storedAttempt = attemptRows.first,
+                      storedAttempt.selection == manifest.selection,
+                      storedAttempt.device == handle.info.deviceID,
+                      storedAttempt.omissions == manifest.omissions else {
+                    throw EngineError.corruptedRepository("Attempt does not match the restore point manifest")
+                }
+            }
+            let totalBytes = try await validate(manifest, repository: handle.info.location)
+            try Task.checkCancellation()
             let selectionData = try JSONEncoder().encode(manifest.selection)
             let omissionsData = try JSONEncoder().encode(manifest.omissions)
             let point = RestorePoint(
@@ -244,6 +389,7 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
                                .blob(selectionData), .integer(Int64(manifest.entries.count)), .integer(totalBytes), .blob(omissionsData)]
                 )
                 for entry in manifest.entries {
+                    try Task.checkCancellation()
                     if let hash = entry.contentHash {
                         try handle.database.execute(
                             "INSERT OR IGNORE INTO objects(sha256, size) VALUES(?, ?)",
@@ -259,8 +405,15 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
                                    entry.contentHash.map(SQLiteValue.text) ?? .null]
                     )
                 }
+                if let attempt {
+                    let removed = try handle.database.execute("DELETE FROM attempts WHERE id = ? AND repository_id = ?",
+                                                              bindings: [.text(attempt.id.uuidString), .text(repository.id.uuidString)])
+                    guard removed == 1 else { throw EngineError.corruptedRepository("Backup attempt disappeared before commit") }
+                }
             }
             return point
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw Self.mapRepositoryError(error, location: handle.info.location)
         }
@@ -362,6 +515,7 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
                 throw Self.posixFailure(errno, location: metadataURL)
             }
             try Self.validateSchema(database)
+            try database.execute("UPDATE attempts SET state = 'interrupted' WHERE state = 'running'")
             let records: [(String, String, String)] = try database.rows(
                 "SELECT id, device_serial, display_name FROM repository LIMIT 1"
             ) { statement in
@@ -387,10 +541,11 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
         }
     }
 
-    private func validate(_ manifest: RestorePointManifest, repository: URL) throws -> Int64 {
+    private func validate(_ manifest: RestorePointManifest, repository: URL) async throws -> Int64 {
         var seen = Set<RemotePath>()
         var total: Int64 = 0
         for entry in manifest.entries {
+            try Task.checkCancellation()
             guard entry.size >= 0, seen.insert(entry.path).inserted else {
                 throw EngineError.corruptedRepository("Manifest contains a duplicate path or negative size")
             }
@@ -401,7 +556,7 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
                 guard let hash = entry.contentHash else { throw EngineError.corruptedRepository("File has no content hash") }
                 try Self.validateHash(hash)
                 let reference = ContentObjectReference(sha256: hash, size: entry.size)
-                try Self.verifyObject(at: objectURL(for: hash, repository: repository), reference: reference)
+                try await Self.verifyObjectCancellable(at: objectURL(for: hash, repository: repository), reference: reference)
                 let (sum, overflow) = total.addingReportingOverflow(entry.size)
                 guard !overflow else { throw EngineError.corruptedRepository("Manifest byte count overflow") }
                 total = sum
@@ -409,6 +564,7 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
                 throw EngineError.corruptedRepository("Unsupported entry kind in restore point")
             }
         }
+        try Task.checkCancellation()
         return total
     }
 
@@ -458,7 +614,8 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
 
     private static func createSchema(_ database: SQLiteDatabase) throws {
         let version = try schemaVersion(database)
-        guard version == 0 else { throw EngineError.repositoryFormatUnsupported(version) }
+        guard version == 0 || version == 2 else { throw EngineError.repositoryFormatUnsupported(version) }
+        if version == 2 { return }
         try database.transaction {
             try database.execute("CREATE TABLE repository(id TEXT PRIMARY KEY, device_serial TEXT NOT NULL, model TEXT, product TEXT, display_name TEXT NOT NULL)")
             try database.execute("CREATE TABLE objects(sha256 TEXT PRIMARY KEY, size INTEGER NOT NULL CHECK(size >= 0))")
@@ -469,13 +626,45 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
             try database.execute("CREATE TRIGGER immutable_restore_points_delete BEFORE DELETE ON restore_points BEGIN SELECT RAISE(ABORT, 'restore points are immutable'); END")
             try database.execute("CREATE TRIGGER immutable_entries_update BEFORE UPDATE ON entries BEGIN SELECT RAISE(ABORT, 'restore point entries are immutable'); END")
             try database.execute("CREATE TRIGGER immutable_entries_delete BEFORE DELETE ON entries BEGIN SELECT RAISE(ABORT, 'restore point entries are immutable'); END")
-            try database.execute("PRAGMA user_version = 1")
+            try createAttemptTables(database)
+            try database.execute("PRAGMA user_version = 2")
         }
     }
 
     private static func validateSchema(_ database: SQLiteDatabase) throws {
         let version = try schemaVersion(database)
-        guard version == 1 else { throw EngineError.repositoryFormatUnsupported(version) }
+        if version == 1 {
+            try database.transaction {
+                try createAttemptTables(database)
+                try database.execute("PRAGMA user_version = 2")
+            }
+        } else if version != 2 {
+            throw EngineError.repositoryFormatUnsupported(version)
+        }
+    }
+
+    private static func createAttemptTables(_ database: SQLiteDatabase) throws {
+        try database.execute("CREATE TABLE attempts(id TEXT PRIMARY KEY, repository_id TEXT NOT NULL, device_serial TEXT NOT NULL, selection BLOB NOT NULL, started_at REAL NOT NULL, state TEXT NOT NULL, omissions BLOB NOT NULL)")
+        try database.execute("CREATE TABLE attempt_entries(attempt_id TEXT NOT NULL REFERENCES attempts(id) ON DELETE CASCADE, path BLOB NOT NULL, size INTEGER NOT NULL CHECK(size >= 0), modified_at REAL, content_hash TEXT NOT NULL REFERENCES objects(sha256), PRIMARY KEY(attempt_id, path))")
+        try database.execute("CREATE INDEX attempts_by_repository ON attempts(repository_id, started_at)")
+    }
+
+    private static func decodeAttempt(_ statement: OpaquePointer) throws -> BackupAttempt {
+        guard let rawID = sqliteText(statement, 0), let id = UUID(uuidString: rawID),
+              let rawRepository = sqliteText(statement, 1), let repositoryUUID = UUID(uuidString: rawRepository),
+              let serial = sqliteText(statement, 2),
+              let selectionData = sqliteBlob(statement, 3),
+              let stateRaw = sqliteText(statement, 5), let state = BackupAttemptState(rawValue: stateRaw),
+              let omissionsData = sqliteBlob(statement, 6) else {
+            throw EngineError.corruptedRepository("Invalid backup attempt metadata")
+        }
+        return BackupAttempt(
+            id: BackupAttemptID(id), repository: RepositoryID(repositoryUUID), device: try DeviceID(serial: serial),
+            selection: try JSONDecoder().decode(BackupSelection.self, from: selectionData),
+            startedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 4)), state: state,
+            omissions: try JSONDecoder().decode([OperationWarning].self, from: omissionsData),
+            checkpointCount: Int(sqlite3_column_int64(statement, 7))
+        )
     }
 
     private static func schemaVersion(_ database: SQLiteDatabase) throws -> Int {
@@ -563,6 +752,37 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
         defer { try? file.close() }
         var hasher = SHA256()
         while let chunk = try file.read(upToCount: 1024 * 1024), !chunk.isEmpty { hasher.update(data: chunk) }
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        guard digest == reference.sha256 else { throw EngineError.corruptedRepository("Content object hash mismatch") }
+    }
+
+    private static func verifyObjectCancellable(at url: URL, reference: ContentObjectReference) async throws {
+        try validateHash(reference.sha256)
+        var parentInfo = stat()
+        guard url.deletingLastPathComponent().path.withCString({ Darwin.lstat($0, &parentInfo) }) == 0,
+              (parentInfo.st_mode & S_IFMT) == S_IFDIR else {
+            throw EngineError.corruptedRepository("Missing or unsafe content object directory")
+        }
+        var fileInfo = stat()
+        guard url.path.withCString({ Darwin.lstat($0, &fileInfo) }) == 0,
+              (fileInfo.st_mode & S_IFMT) == S_IFREG else {
+            throw EngineError.corruptedRepository("Missing or unsafe content object \(reference.sha256)")
+        }
+        let attrs: [FileAttributeKey: Any]
+        do { attrs = try FileManager.default.attributesOfItem(atPath: url.path) }
+        catch { throw EngineError.corruptedRepository("Missing content object \(reference.sha256)") }
+        guard (attrs[.type] as? FileAttributeType) == .typeRegular,
+              let size = attrs[.size] as? NSNumber, size.int64Value == reference.size else {
+            throw EngineError.corruptedRepository("Invalid content object size or type")
+        }
+        let file = try FileHandle(forReadingFrom: url)
+        defer { try? file.close() }
+        var hasher = SHA256()
+        while let chunk = try file.read(upToCount: 1024 * 1024), !chunk.isEmpty {
+            try Task.checkCancellation()
+            hasher.update(data: chunk)
+        }
+        try Task.checkCancellation()
         let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
         guard digest == reference.sha256 else { throw EngineError.corruptedRepository("Content object hash mismatch") }
     }
