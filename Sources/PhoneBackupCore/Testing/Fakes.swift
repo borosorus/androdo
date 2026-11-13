@@ -26,6 +26,7 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteDestinationAccess {
     private var failures: [FakeDeviceFailureKey: [EngineError]] = [:]
     private var mutationsAfterPull: [DeviceID: [FakePullMutation]] = [:]
     private var publishUnverifiedPaths: Set<RemotePath> = []
+    private var publicationFailuresWithoutEngineError: Set<RemotePath> = []
     private var pullCalls: [DeviceID: [RemotePath]] = [:]
     private var childrenCalls: [DeviceID: [RemotePath]] = [:]
 
@@ -71,6 +72,10 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteDestinationAccess {
 
     public func reportNextPublicationUnverified(at path: RemotePath) {
         publishUnverifiedPaths.insert(path)
+    }
+
+    public func failNextPublicationWithoutEngineError(at path: RemotePath) {
+        publicationFailuresWithoutEngineError.insert(path)
     }
 
     public func recordedPulls(on device: DeviceID) -> [RemotePath] { pullCalls[device, default: []] }
@@ -146,6 +151,10 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteDestinationAccess {
         let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         guard Int64(data.count) == expected.size, digest == expected.sha256 else {
             throw EngineError.corruptedRepository("Fake remote publication verification failed")
+        }
+        if publicationFailuresWithoutEngineError.remove(path) != nil {
+            throw NSError(domain: "FakeDeviceTransport", code: 17,
+                          userInfo: [NSLocalizedDescriptionKey: "Simulated local publication error"])
         }
         let date = Date()
         seed(RemoteEntry(path: path, kind: .file, size: Int64(data.count), modifiedAt: date), on: device, data: data)

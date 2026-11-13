@@ -63,3 +63,9 @@ public protocol RestoreEngine: OperationCoordinator {
     func startRestore(_ plan: RestorePlanID, replacing conflicts: Set<UUID>) async throws -> OperationID
     func result(for operation: OperationID) async -> RestoreBatchResult?
 }
+
+public protocol CopyEngine: OperationCoordinator {
+    func planCopy(_ request: CopyRequest) async throws -> CopyPlan
+    func startCopy(_ plan: CopyPlanID, replacing conflicts: Set<UUID>) async throws -> OperationID
+    func result(for operation: OperationID) async -> CopyBatchResult?
+}

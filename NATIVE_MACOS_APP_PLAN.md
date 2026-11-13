@@ -24,7 +24,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 3 — Implement the local backup repository and immutable restore points. Commit: `feat(repository): add durable snapshot storage`. Review: approved after fixes for stable per-open volume identity, copied repository IDs, and filesystem-compatible exclusive publication.
 - [x] Step 4 — Implement selective backup planning, execution, progress, and recovery. Commit: `feat(backup): add scoped snapshot operations`. Review: approved after fixes; see completion notes below.
 - [x] Step 5 — Implement verification and safe local/phone restore. Commit: `feat(restore): add verified batch restore`. Review: approved after fixes for source-base validation, descriptor cleanup, and failure-path coverage.
-- [ ] Step 6 — Implement direct file copy in both directions.
+- [x] Step 6 — Implement direct file copy in both directions. Commit: `feat(transfer): add direct file copy`. Review: approved after fixes for destination parents, source ancestors, directory revalidation, cancellation, error reporting, repository containment, descriptor-relative traversal, and plan mapping consistency.
 - [ ] Step 7 — Build the backup-first SwiftUI experience and offline restore browser.
 - [ ] Step 8 — Build the phone file browser, Activity, and accessibility polish.
 - [ ] Step 9 — Complete packaging, CI, and end-to-end acceptance.
@@ -107,9 +107,11 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 **Commit:** `feat(transfer): add direct file copy`
 
-**Checks:** Bidirectional single/multi-file copy, folder copy, duplicate names, replacement choice, unsafe paths, transfer interruption, retry, and content verification.
+**Checks:** Fake-device tests cover both directions, folder and empty-directory copies, missing destination parents, duplicate targets, explicit and stale replacement approval, missing-target replacement recovery, unsafe source paths, source changes, directory removal after planning, cancellation during 256 MiB local staging, partial failures, and published-but-unverified output. Repository restore points and attempts remain unchanged. Full `swift test` passed (67 tests); `git diff --check` passed. Retrying starts from a fresh plan; retry UI remains part of the later UI steps.
 
-**Review:** Confirm copy does not mutate repository history and phone-side deletes/moves are not inferred from a copy.
+**Review:** Approved. Copy is repository-independent apart from read-only managed-root protection. Local Mac sources are enumerated and opened through pinned directory descriptors; destination publication uses the verified restore publisher. Android source and destination ancestor checks reject symlink traversal except the intentional `/sdcard` alias. Phone-side deletes and moves are never inferred from a copy.
+
+**Complete:** Added `CopyEngine` planning and operation results for phone-to-Mac and Mac-to-phone selected files/folders. Copy preserves selected root names, checks source and destination state before and during transfer, stages and hashes bytes in a private temporary directory, uses atomic verified destination publication, and records partial/cancelled/unverified outcomes. Existing backup history is read-only. Concurrent changes to Android ancestors can still race path-based ADB checks; they are not represented as race-proof.
 
 ### Step 7 — Backup-first native UI
 
