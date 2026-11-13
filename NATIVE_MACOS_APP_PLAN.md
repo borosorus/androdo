@@ -209,6 +209,22 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 **Complete:** Swift tests passed (69 core + 26 UI-model). Coverage includes library/device independence, omission-aware completeness, no/empty/unreadable history, stale success/error results, backup publication, readiness, failed repository discovery, and preserving/recovering known-repository IDs after failed startup discovery. Reviewer approved after discovery and recovery fixes. The app bundle built with the shared-geometry folded-A icon, valid Info.plist, traversable package permissions and ad-hoc signature. Native fixture captures were visually inspected in light/dark, standard/compact usable-content sizes, sidebar-collapsed, first-use/library and long-name states. Native toolbar height is added to fixture capture dimensions so content is not clipped. The titlebar remains window-scoped; its cleanup and accessibility labels were reviewed. Full interactive keyboard/VoiceOver, fullscreen and real-device acceptance remain Step 9 work. No live model was launched for visual checks, and no phone folders, user backup repositories or standard preferences were accessed by fixtures. Generated captures/bundles remain ignored or in temporary directories.
 
+### Steps 8.6–8.9 — Phone-trial UX fixes
+
+**User observations:** Backup works, but an unexplained “Backup needs attention” result appears; live Files navigation feels slow/buggy; saved backups and phone navigation need clear separation; Activity should be secondary; selection means the current phone's backup scope.
+
+**Plan (planner reviewed; commit and reviewer per slice):**
+1. **8.6** Retain operation kind after completion, derive honest result headings and show warnings/recovery reasons. Commit: `fix(ui): show accurate operation outcomes and details`.
+2. **8.7** Coordinate/deduplicate/cancel browser requests, show pending locations, disable stale actions, scope selection to displayed rows, add history and a bounded cache of visited folders only. Refresh/invalidate on writes and connection/transport changes. Commit: `fix(files): coordinate live folder navigation and selection`.
+3. **8.8** Replace the current-phone backup scope tree with a transactional browser/table, explicit Include/Exclude actions and a scope tray. Preserve all-shared/custom roots/exclusions and reject stale device application. Commit: `feat(backups): simplify phone backup scope selection`.
+4. **8.9** Separate saved backup and live phone navigation; move bounded session Activity into Recent Operations; clarify saved-snapshot provenance and fix stale restore-point failures/loading states. Commit: `refactor(ui): distinguish saved backups from live phone files`.
+
+**Checks:** Fake-only delayed/cancelled navigation tests, outcome/recovery tests, selection draft/device-guard tests, saved snapshot loading race tests, full Swift suite, native fixture captures and final bundle verification. No real phone folders, standard preferences, or user backup data may be used for investigation. Do not claim device latency is measured or solved by fake tests alone.
+
+**8.6 complete:** Retained backup/restore/export/copy presentation identity, derived truthful terminal headings, exposed warning details for every operation and explained interrupted recovery. Clearing an alert preserves a running operation; dismissing a terminal result preserves independent backup history/recovery. Swift tests passed (69 core + 29 UI-model). Reviewer approved after export identity and dismissal coverage were added.
+
+**8.7–8.9:** In progress. The transport already issues one shallow find command per listing and supports process cancellation; fixes belong primarily in request coordination and interaction/state handling.
+
 ### Step 9 — Packaging and end-to-end acceptance
 
 **Deliverable:** Add reproducible local `.app` build steps using the installed ADB, ADB location recovery, macOS CI for engine/app targets, and a short user guide. Keep initial release local/ad-hoc signed; defer notarization, universal binaries, App Store, and ADB redistribution pending licensing review.

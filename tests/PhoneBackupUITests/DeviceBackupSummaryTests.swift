@@ -157,13 +157,24 @@ final class DeviceBackupSummaryTests: XCTestCase {
         await fixture.model.reviewBackup()
         XCTAssertNotNil(fixture.model.backupPlan)
         await fixture.model.startBackup()
+        let runningID = fixture.model.operationID
+        fixture.model.clearStatus()
+        XCTAssertNotNil(runningID)
+        XCTAssertEqual(fixture.model.operationID, runningID)
+        XCTAssertEqual(fixture.model.operationKind, .backup)
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while fixture.model.isBusy && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertFalse(fixture.model.isBusy)
+        XCTAssertEqual(fixture.model.operationKind, .backup)
+        XCTAssertEqual(fixture.model.operationEvent?.phase, .completed)
         guard case .loaded(let summary) = fixture.model.deviceBackupSummary else { return XCTFail("Expected completed history") }
         XCTAssertEqual(summary.points.count, 1)
         XCTAssertNotNil(summary.latestComplete)
         XCTAssertEqual(summary.latestComplete?.entryCount, 2)
+        fixture.model.clearStatus()
+        XCTAssertNil(fixture.model.operationKind)
+        XCTAssertNil(fixture.model.operationEvent)
+        XCTAssertEqual(fixture.model.deviceBackupSummary, .loaded(summary))
     }
 
     func testReadinessChoosesTheNextPrerequisiteAndRespectsBusyState() throws {

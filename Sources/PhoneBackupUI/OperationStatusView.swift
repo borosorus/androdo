@@ -8,7 +8,7 @@ struct OperationStatusView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label(model.operationTitle ?? "Backup needs attention", systemImage: "arrow.triangle.2.circlepath")
+                Label(presentation.title, systemImage: presentation.symbol)
                     .font(.callout.weight(.semibold))
                 Spacer()
                 if model.isOperationRunning {
@@ -30,7 +30,7 @@ struct OperationStatusView: View {
                     } else if let total = event.progress.totalItems, total > 0 {
                         ProgressView(value: Double(event.progress.completedItems), total: Double(total)).frame(maxWidth: 220)
                     } else { ProgressView().controlSize(.small) }
-                    Text(phaseLabel(event.phase)).font(.callout).foregroundStyle(.secondary)
+                    Text(presentation.phase).font(.callout).foregroundStyle(.secondary)
                     Spacer(minLength: 0)
                     if event.progress.totalItems != nil || event.progress.completedItems > 0 {
                         Text("\(event.progress.completedItems) / \(event.progress.totalItems.map(String.init) ?? "…") items · \(UIFormatting.bytes(event.progress.completedBytes))")
@@ -40,6 +40,23 @@ struct OperationStatusView: View {
                 if let failure = event.failure {
                     MessageBanner(text: UserFacingError.message(for: failure), symbol: "exclamationmark.triangle", isWarning: true)
                 }
+            }
+            if let event = model.operationEvent, !event.warnings.isEmpty {
+                DisclosureGroup("Warning details (\(event.warnings.count))") {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(event.warnings) { warning in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    if let path = warning.path { Text(path.description).textSelection(.enabled) }
+                                    Text(warning.message).foregroundStyle(.secondary).textSelection(.enabled)
+                                }.frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }.font(.callout)
+                    }.frame(maxHeight: 110)
+                }
+            }
+            if model.operationEvent == nil && !presentation.phase.isEmpty {
+                Text(presentation.phase).font(.callout).foregroundStyle(.secondary)
             }
             if model.recoveryAttempt != nil || !model.pendingAttempts.isEmpty {
                 ScrollView { recoveryContent }.frame(maxHeight: 170)
@@ -58,7 +75,9 @@ struct OperationStatusView: View {
     private var recoveryContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let attempt = model.recoveryAttempt {
-                MessageBanner(text: "Backup incomplete · \(attempt.omissions.count) paths need attention.", symbol: "exclamationmark.triangle", isWarning: true)
+                MessageBanner(text: attempt.state == .interrupted
+                              ? "This backup was interrupted. \(attempt.checkpointCount) items were saved; resume to continue."
+                              : "\(attempt.omissions.count) paths could not be saved. Review them, retry, or explicitly finish with omissions.", symbol: "exclamationmark.triangle", isWarning: true)
                 if !model.recoveryWarnings.isEmpty {
                     DisclosureGroup("Skipped paths (\(model.recoveryWarnings.count))") {
                         ForEach(model.recoveryWarnings) { warning in
@@ -105,25 +124,9 @@ struct OperationStatusView: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func phaseLabel(_ phase: OperationPhase) -> String {
-        switch phase {
-        case .scanning: "Scanning files…"
-        case .planning:
-            if model.operationTitle?.localizedCaseInsensitiveContains("restore") == true || model.operationTitle?.localizedCaseInsensitiveContains("export") == true { "Checking restore destinations…" }
-            else if model.operationTitle?.localizedCaseInsensitiveContains("copy") == true { "Planning file copy…" }
-            else { "Preparing backup…" }
-        case .transferring:
-            if model.operationTitle?.localizedCaseInsensitiveContains("copy") == true { "Copying files…" }
-            else if model.operationTitle?.localizedCaseInsensitiveContains("restore") == true { "Restoring files to Android…" }
-            else { "Copying files from device…" }
-        case .verifying: "Verifying files…"
-        case .committing:
-            if model.operationTitle?.localizedCaseInsensitiveContains("backup") == true { "Finishing restore point…" }
-            else { "Publishing verified files…" }
-        case .completed: model.operationEvent?.warnings.isEmpty == false ? "Finished with skipped paths" : "Verified"
-        case .incomplete: "Incomplete"
-        case .cancelled: "Cancelled"
-        case .failed: "Failed"
-        }
+    private var presentation: OperationPresentation {
+        OperationPresentation(kind: model.operationKind, event: model.operationEvent,
+                              isRunning: model.isOperationRunning, recovery: model.recoveryAttempt,
+                              pendingCount: model.pendingAttempts.count)
     }
 }

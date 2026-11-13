@@ -45,6 +45,7 @@ public final class AppModel {
     public private(set) var operationID: OperationID?
     public private(set) var operationEvent: OperationEvent?
     public private(set) var operationTitle: String?
+    public private(set) var operationKind: OperationKind?
     public private(set) var restoreResult: RestoreBatchResult?
     public private(set) var isPlanningBackup = false
     public private(set) var isPlanningExport = false
@@ -724,9 +725,13 @@ public final class AppModel {
     public func clearStatus() {
         statusMessage = nil
         errorMessage = nil
-        operationEvent = nil
-        restoreResult = nil
-        copyResult = nil
+        if !isOperationRunning {
+            operationEvent = nil
+            operationTitle = nil
+            operationKind = nil
+            restoreResult = nil
+            copyResult = nil
+        }
     }
 
     public func reportError(_ message: String) {
@@ -917,6 +922,7 @@ public final class AppModel {
     private func monitorBackup(_ operation: OperationID, engine: any BackupEngine, repository: RepositoryID) {
         operationID = operation
         activeOperationKind = .backup
+        operationKind = .backup
         activeActivityID = activityStore.begin(.backup)
         operationTitle = "Backing up"
         operationEvent = nil
@@ -966,6 +972,7 @@ public final class AppModel {
     private func monitorRestore(_ operation: OperationID, title: String = "Exporting restore point") {
         operationID = operation
         activeOperationKind = .restore
+        operationKind = activeRestoreRequest.map { isPhoneRestoreTarget($0.target) ? .restore : .export } ?? .restore
         activeActivityID = activityStore.begin(.restore)
         operationTitle = title
         operationEvent = nil
@@ -999,6 +1006,7 @@ public final class AppModel {
     private func monitorCopy(_ operation: OperationID, engine: any CopyEngine) {
         operationID = operation
         activeOperationKind = .copy
+        operationKind = .copy
         activeActivityID = activityStore.begin(.copy)
         operationTitle = "Copying files"
         operationEvent = nil
