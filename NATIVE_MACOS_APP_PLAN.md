@@ -30,6 +30,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 8.1 — Refine native navigation, selection, and shared operation/review flows. Commit: `refactor(ui): unify native macOS navigation and flows`. Review: approved after fixes for reconnect navigation, restore replacement messaging, bounded global recovery, and accurate exclusion labels.
 - [x] Step 8.2 — Give the app a distinct native identity, simplify the Overview and backup library, and reduce instructional copy. Commit: `feat(ui): add a distinctive native Mac identity`. Review: approved after fixes for text contrast and Settings error visibility.
 - [x] Step 8.3 — Rename the app Androdo, integrate toolbar branding, enlarge native controls, and add guided ADB setup. Commit: `feat(macOS): introduce Androdo and guided ADB setup`. Review: approved after preserving open browser state during ADB rechecks and correcting clone instructions.
+- [ ] Step 8.4 — Refine Androdo identity, titlebar integration, and backup status hierarchy. Two full-window design studies reviewed; user selected A (folded A). Production implementation is in progress. Prototype commit: `design(macOS): compare Androdo identity and window layouts`.
 - [ ] Step 9 — Complete packaging, CI, and end-to-end acceptance. Local packaging and CI committed as `build(macOS): package app and add acceptance checks`; reviewer approved. Phone acceptance remains pending an explicitly selected disposable folder.
 
 ## Steps
@@ -181,6 +182,16 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 **Commit:** `feat(macOS): introduce Androdo and guided ADB setup`
 
 **Complete:** Swift tests passed (69 core + 18 UI-model). New fake-only cases cover missing-to-installed discovery, stale preference replacement, discovery failure, busy-state protection, repository retention, and preserving the current folder/selection without extra phone-folder reads during changed/unchanged transport rechecks. The Androdo bundle, executable, icon, metadata, permissions, and ad-hoc signature passed local packaging checks. CI now checks explicit resources rather than the obsolete four-file count. Reviewer approved after the browser-preservation and clone-directory fixes. Standalone fixture previews were rendered to assess larger control spacing; native button text is not consistently captured by ImageRenderer in dark appearance, so those images are not full native-window acceptance. Full toolbar, setup-sheet interaction, sizing, keyboard/VoiceOver and actual-device acceptance remain Step 9 work. No phone folders or user backup data were accessed.
+
+### Step 8.4 — Full-window identity and UX refinement
+
+**Plan:** Compare the folded-A archive mark and simplified phone/archive mark in the same full-window composition before changing the production app. Keep the brand in a stable titlebar position, reduce the phone illustration, distinguish USB connection from latest complete backup, expose destination/selected names, and retain a persistent cancellation/progress strip. A real latest-backup summary must be queried for the displayed device.
+
+**Prototype slice:** Add an isolated standard-library Python SVG generator and self-contained offline HTML comparison. Include connected Overview, first use with missing ADB, populated Backups, and running-backup states in light/dark appearance, plus 1120×720, 900×600 and sidebar-collapsed layouts. Show Dock, wordmark and 16/24-pixel treatments for both original marks. Use fictional data only. Optional PNG exports use the already available rsvg-convert; generated output is ignored under dist/.
+
+**Prototype commit:** `design(macOS): compare Androdo identity and window layouts`
+
+**Progress:** Generated and XML-validated 48 full-window illustrations and four identity boards, rendered representative PNGs, and inspected the actual comparison page through a fresh temporary headless browser profile. Browser rendering produced a screenshot successfully despite headless display-link warnings. Reviewer approved with no actionable findings after progress controls were made visibly unavailable while busy. The user selected A (folded A). This is a design study, not a running native app or evidence of macOS toolbar/accessibility acceptance. Production app files, preferences, repositories, and phone folders were not accessed by the study. No product behavior or app icon has changed. Next: implement the selected folded-A identity and hierarchy in SwiftUI, query backup facts for the displayed device, then run checks/review and rebuild.
 
 ### Step 9 — Packaging and end-to-end acceptance
 

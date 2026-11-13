@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'">
+<title>Androdo · Window & identity study</title>
+<style>
+* { box-sizing:border-box } body { margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif; color:#283442; background:#e8edf2 }
+header { max-width:1600px; margin:auto; padding:28px 32px 18px } .eyebrow { font-size:11px; letter-spacing:.13em; text-transform:uppercase; color:#596c80; font-weight:650 }
+h1 { margin:5px 0 8px; font-size:26px; font-weight:650; letter-spacing:-.6px } header p { margin:0; color:#596979; max-width:880px }
+.controls { display:flex; flex-wrap:wrap; gap:16px; padding-top:22px; align-items:end } label { display:flex; flex-direction:column; gap:6px; font-size:11px; color:#556779; font-weight:600 }
+select { font:13px -apple-system,BlinkMacSystemFont,sans-serif; color:#233448; border:1px solid #c0ccd8; border-radius:8px; padding:9px 30px 9px 12px; background:#fff; min-width:150px }
+select:focus-visible,a:focus-visible { outline:3px solid #315fbd; outline-offset:3px } main { max-width:1600px; margin:auto; padding:12px 12px 32px } .grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:0 } .grid.single { grid-template-columns:minmax(0,1fr); max-width:1240px; margin:auto }
+figure { margin:0; min-width:0 } figcaption { padding:0 30px; display:flex; align-items:baseline; justify-content:space-between; gap:14px } figcaption strong { font-size:13px } .note { font-size:12px; color:#596979; margin:4px 30px 8px } .identity { margin:16px 30px 0; } .identity svg { display:block; width:100%; height:auto } .art svg { display:block; width:100%; height:auto } a { color:#2455a7; text-decoration:none; font-size:12px } a:hover { text-decoration:underline } footer { max-width:1180px; margin:auto; padding:0 32px 35px; font-size:12px; color:#596979 }
+@media (max-width:1000px) { .grid { grid-template-columns:minmax(0,1fr) } header { padding:22px } }
+@media (prefers-reduced-motion:no-preference) { select { transition:border-color .15s } }
+</style>
+<header>
+<div class="eyebrow">Androdo · Design study 02</div>
+<h1>One window. Two identities.</h1>
+<p>Compare the folded A and phone/archive marks in the same proposed layout. All names, dates, counts and backup states are fictional. These are illustrations; app controls inside them do not run operations.</p>
+<div class="controls">
+<label>Concept<select id="concept"><option value="compare">Compare both</option><option value="fold">A · Folded A</option><option value="phone">B · Phone / archive</option></select></label>
+<label>Screen<select id="screen"><option value="overview">Connected overview</option><option value="first-use">First use · ADB missing</option><option value="backups">Backup library</option><option value="progress">Backup in progress</option></select></label>
+<label>Appearance<select id="appearance"><option value="light">Light</option><option value="dark">Dark</option></select></label>
+<label>Window<select id="layout"><option value="standard">1120 × 720</option><option value="compact">900 × 600</option><option value="collapsed">Sidebar collapsed</option></select></label>
+</div>
+</header>
+<main><div class="grid" id="comparison" aria-live="polite"></div></main>
+<footer>Proposed changes: a stable brand position in the titlebar, separate USB and backup status, a smaller device illustration, readable destination and scope rows, and a persistent progress strip. This study is separate from the working app. Real macOS chrome, toolbar behavior, keyboard access, contrast and responsive layout require implementation checks.</footer>
+<script>
+'use strict';
+const illustrations = /*ILLUSTRATIONS*/;
+const controls = ['concept','screen','appearance','layout'].map(id => document.getElementById(id));
+function render() {
+ const [concept,screen,appearance,layout] = controls.map(el => el.value);
+ const kinds = concept === 'compare' ? ['fold','phone'] : [concept];
+ const root = document.getElementById('comparison');
+ root.className = 'grid' + (kinds.length === 1 ? ' single' : '');
+ root.replaceChildren();
+ for (const kind of kinds) {
+  const key = [kind,screen,appearance,layout].join('-');
+  const figure = document.createElement('figure');
+  const caption = document.createElement('figcaption');
+  const title = document.createElement('strong');
+  title.textContent = kind === 'fold' ? 'A · Folded A' : 'B · Phone / archive';
+  const download = document.createElement('a');
+  download.textContent = 'Save SVG'; download.download = key + '.svg';
+  download.href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(illustrations[key]);
+  caption.append(title,download);
+  const note = document.createElement('p'); note.className = 'note';
+  note.textContent = kind === 'fold' ? 'A folded archive spine: more distinctive, less literal.' : 'A refined device and archive: more immediately explanatory.';
+  const art = document.createElement('div'); art.className = 'art'; art.innerHTML = illustrations[key];
+  const identity = document.createElement('div'); identity.className = 'identity';
+  identity.innerHTML = illustrations['identity-' + kind + '-' + appearance];
+  figure.append(caption,note,identity,art); root.append(figure);
+ }
+}
+for (const control of controls) control.addEventListener('change',render);
+render();
+</script>
+</html>
