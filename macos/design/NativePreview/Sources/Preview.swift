@@ -11,7 +11,15 @@ struct NativePreviewApp: App {
 
     var body: some Scene {
         WindowGroup("Androdo · Fictional preview") {
-            MainWindow(initialColumnVisibility: CommandLine.arguments.contains("--collapsed") ? .detailOnly : .all)
+            Group {
+                if CommandLine.arguments.contains("--scope") {
+                    if fixture.ready, let device = fixture.model.selectedDevice {
+                        BackupSelectionEditor(device: device, selection: fixture.model.backupSelection)
+                    } else { ProgressView("Loading fictional scope…") }
+                } else {
+                    MainWindow(initialColumnVisibility: CommandLine.arguments.contains("--collapsed") ? .detailOnly : .all)
+                }
+            }
                 .environment(fixture.model)
                 .environment(fixture.model.fileBrowser)
                 .controlSize(.large)
@@ -51,7 +59,8 @@ final class PreviewFixture {
         transport = FakeDeviceTransport(devices: [device])
         let firstUse = CommandLine.arguments.contains("--first-use")
         model = AppModel(services: AppServices(repositoryStore: store, deviceTransport: firstUse ? nil : transport,
-                                               remoteAccess: firstUse ? nil : transport),
+                                               remoteAccess: firstUse ? nil : transport,
+                                               backupEngine: firstUse ? nil : DefaultBackupEngine(remote: transport, repositoryStore: store)),
                          preferences: AppPreferences(defaults: defaults), loadOnStart: false,
                          adbResolver: { _ in nil })
         NSApp.appearance = NSAppearance(named: CommandLine.arguments.contains("--dark") ? .darkAqua : .aqua)
@@ -64,9 +73,18 @@ final class PreviewFixture {
         let entries = [BackupEntry(path: try! RemotePath("/sdcard/Pictures"), kind: .directory, size: 0, modifiedAt: nil, contentHash: nil),
                        BackupEntry(path: try! RemotePath("/sdcard/Documents"), kind: .directory, size: 0, modifiedAt: nil, contentHash: nil)]
         await store.seed(repository: repository, restorePoints: [point], entries: [point.id: entries])
+        for entry in entries { await transport.seed(RemoteEntry(path: entry.path, kind: entry.kind), on: device.id) }
+        await transport.seed(RemoteEntry(path: try! RemotePath("/sdcard/Pictures/Example.jpg"), kind: .file, size: 1), on: device.id, data: Data([1]))
         await model.refreshDevices()
         await model.chooseBackupLocation(root)
         model.setBackupSelection(BackupSelection(scope: .selected(entries.map(\.path))))
+        if CommandLine.arguments.contains("--files") { model.section = .files }
+        if CommandLine.arguments.contains("--result") {
+            await model.reviewBackup()
+            await model.startBackup()
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            while model.isBusy && ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+        }
         if CommandLine.arguments.contains("--backups") {
             model.section = .backups
             await model.selectRestorePoint(point)

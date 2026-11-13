@@ -225,7 +225,9 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 **8.7 complete:** Added owned/deduplicated/cancellable listings, pending-path loading, native table opening, visited-only bounded metadata cache, back/forward history, explicit refresh and write invalidation, selection intersection, and copy/drop guards while loading. Fixed review findings for suspended rows after cached navigation, error dismissal on leaving Files, and oversized cache replacement. Swift tests passed (69 core + 38 UI-model); reviewer approved. Actual device latency remains unmeasured.
 
-**8.8–8.9:** In progress. The transport already issues one shallow find command per listing and supports process cancellation; fixes belong primarily in request coordination and interaction/state handling.
+**8.8 complete:** Replaced the current-phone scope checkbox tree with a native browser/table, explicit Include/Exclude actions and an included/excluded scope tray. Mode changes preserve custom roots/exclusions. Draft edits stay local until Done; an immutable presentation session plus retained original device prevent retargeting a draft after phone changes. Added guarded application and tests for scope semantics, persistence, stale phone rejection and shallow browsing. Swift tests passed (69 core + 43 UI-model); native fictional compact picker capture inspected; reviewer approved after fixing presentation identity.
+
+**8.9:** In progress. The transport already issues one shallow find command per listing and supports process cancellation; fixes belong primarily in request coordination and interaction/state handling.
 
 ### Step 9 — Packaging and end-to-end acceptance
 

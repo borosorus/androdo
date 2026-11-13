@@ -188,6 +188,14 @@ public final class AppModel {
         if let device = selectedDevice { preferences.save(selection, for: device.id) }
     }
 
+    @discardableResult
+    public func applyBackupSelection(_ selection: BackupSelection, for expectedDevice: DeviceID) -> Bool {
+        guard !isBusy, selectedDevice?.id == expectedDevice, selectedDevice?.state == .device,
+              devices.contains(where: { $0.id == expectedDevice && $0.state == .device }) else { return false }
+        setBackupSelection(selection)
+        return true
+    }
+
     public func listRemoteChildren(of path: RemotePath) async -> [RemoteEntry] {
         guard let device = selectedDevice, device.state == .device,
               let remote = services.remoteAccess else {

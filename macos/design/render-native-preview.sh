@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PREVIEW_SCRATCH="${TMPDIR:-/tmp}/androdo-native-preview-build"
-OUTPUT="${1:?Usage: render-native-preview.sh OUTPUT.png [--dark] [--compact] [--collapsed] [--first-use] [--backups] [--long-name]}"
+OUTPUT="${1:?Usage: render-native-preview.sh OUTPUT.png [--dark] [--compact] [--collapsed] [--first-use] [--backups] [--long-name] [--scope] [--files] [--result]}"
 shift
 swift build --package-path "$ROOT/macos/design/NativePreview" --scratch-path "$PREVIEW_SCRATCH" --product AndrodoNativePreview
 PREVIEW_BIN="$(swift build --package-path "$ROOT/macos/design/NativePreview" --scratch-path "$PREVIEW_SCRATCH" --show-bin-path)"
