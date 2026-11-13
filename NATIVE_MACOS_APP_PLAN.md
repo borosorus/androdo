@@ -1,4 +1,4 @@
-# Native macOS Android Backup App — Progress Journal
+# Androdo — Native macOS Android Backup App Progress Journal
 
 ## Goal
 
@@ -29,6 +29,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 8 — Build the phone file browser, Activity, and accessibility polish. Commit: `feat(ui): add phone browser and operation activity`. Review: approved after fixes for device-bound restore browsing, Finder promise device binding, asynchronous safe-no-overwrite recovery, empty-folder drops, verified Activity counts, and preventing review dismissal during operation startup.
 - [x] Step 8.1 — Refine native navigation, selection, and shared operation/review flows. Commit: `refactor(ui): unify native macOS navigation and flows`. Review: approved after fixes for reconnect navigation, restore replacement messaging, bounded global recovery, and accurate exclusion labels.
 - [x] Step 8.2 — Give the app a distinct native identity, simplify the Overview and backup library, and reduce instructional copy. Commit: `feat(ui): add a distinctive native Mac identity`. Review: approved after fixes for text contrast and Settings error visibility.
+- [x] Step 8.3 — Rename the app Androdo, integrate toolbar branding, enlarge native controls, and add guided ADB setup. Commit: `feat(macOS): introduce Androdo and guided ADB setup`. Review: approved after preserving open browser state during ADB rechecks and correcting clone instructions.
 - [ ] Step 9 — Complete packaging, CI, and end-to-end acceptance. Local packaging and CI committed as `build(macOS): package app and add acceptance checks`; reviewer approved. Phone acceptance remains pending an explicitly selected disposable folder.
 
 ## Steps
@@ -165,6 +166,21 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 **Commit:** `feat(ui): add a distinctive native Mac identity`
 
 **Complete:** Added the device-first Overview, original phone/archive identity and packaged Dock icon, blue/teal accents with copper backup-history details, appearance/contrast-aware control colors, concise copy, Settings with local ADB error presentation and build identity, a two-pane backup library, and compact progress with bounded recovery controls. Kept file browsing native and preserved selection drafts, replacement approvals, cancellation, and incomplete restore-point messaging. Swift tests passed (69 core + 14 UI-model); the final app bundle built with valid Info.plist, icon and ad-hoc signature, and traversable package permissions. `bash -n` and `git diff --check` passed. Fictional-data Overview previews were rendered and visually inspected in light/dark appearance; they are isolated compositions, not running-app screenshots. Reviewer approved after fixes for text contrast and Settings error visibility. Full-window sizing, interactive keyboard/VoiceOver, and selected-folder phone acceptance remain Step 9 work. No phone folders or user backup data were accessed. No latest-backup date is inferred from the library selection, which may belong to a different device.
+
+### Step 8.3 — Androdo branding, controls, and ADB setup
+
+**Deliverable:** Present the app as Androdo in Finder, the executable/product, app menu, alerts and Settings. Integrate the name/emblem into the native toolbar. Apply larger native controls consistently at scene and shared-sheet roots. Provide one ADB guide from Overview, sidebar, and Settings.
+
+**Implementation plan:**
+1. Update visible/bundle/product naming and native docs/CI; retain the stable bundle identifier, preference keys, internal modules, and repository directory so current saved locations/selections remain usable.
+2. Replace the detached sidebar title with a native toolbar wordmark and apply shared large control sizing, retaining small progress indicators and native plain navigation rows.
+3. Add a reusable setup sheet explaining ADB, official Google download/unzip/select instructions, a copyable Homebrew command, USB-debugging authorization, and locate/recheck actions. Use guided installation; do not execute installers or package managers inside the app.
+4. Add dependency-injected ADB rediscovery that retains the repository store, updates executable preferences, and preserves cached listings for the same device. Invalidate in-flight listing responses when swapping transport; identity/state changes still reset the browser.
+5. Exercise setup with fake executables, build/verify the renamed bundle, review, update this journal, and commit.
+
+**Commit:** `feat(macOS): introduce Androdo and guided ADB setup`
+
+**Complete:** Swift tests passed (69 core + 18 UI-model). New fake-only cases cover missing-to-installed discovery, stale preference replacement, discovery failure, busy-state protection, repository retention, and preserving the current folder/selection without extra phone-folder reads during changed/unchanged transport rechecks. The Androdo bundle, executable, icon, metadata, permissions, and ad-hoc signature passed local packaging checks. CI now checks explicit resources rather than the obsolete four-file count. Reviewer approved after the browser-preservation and clone-directory fixes. Standalone fixture previews were rendered to assess larger control spacing; native button text is not consistently captured by ImageRenderer in dark appearance, so those images are not full native-window acceptance. Full toolbar, setup-sheet interaction, sizing, keyboard/VoiceOver and actual-device acceptance remain Step 9 work. No phone folders or user backup data were accessed.
 
 ### Step 9 — Packaging and end-to-end acceptance
 

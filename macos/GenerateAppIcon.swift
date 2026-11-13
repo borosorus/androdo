@@ -1,6 +1,6 @@
 import AppKit
 
-// Original PhoneBackup mark. All artwork is drawn locally; no external assets.
+// Original Androdo mark. All artwork is drawn locally; no external assets.
 let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
 try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
 

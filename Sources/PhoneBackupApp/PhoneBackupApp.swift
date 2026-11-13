@@ -3,7 +3,7 @@ import PhoneBackupUI
 import SwiftUI
 
 @main
-struct PhoneBackupApp: App {
+struct AndrodoApp: App {
     @State private var model: AppModel
 
     init() {
@@ -17,12 +17,13 @@ struct PhoneBackupApp: App {
             MainWindow()
                 .environment(model)
                 .environment(model.fileBrowser)
+                .controlSize(.large)
                 .frame(minWidth: 900, minHeight: 600)
         }
         .defaultSize(width: 1120, height: 760)
 
         Settings {
-            PhoneBackupSettings().environment(model)
+            PhoneBackupSettings().environment(model).controlSize(.large)
         }
     }
 }

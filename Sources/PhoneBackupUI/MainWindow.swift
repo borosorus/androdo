@@ -4,7 +4,7 @@ import SwiftUI
 
 public struct MainWindow: View {
     @Environment(AppModel.self) private var model
-    @State private var showingADBPanel = false
+    @State private var showingADBSetup = false
     @State private var showingOmissionConfirmation = false
 
     public init() {}
@@ -38,19 +38,11 @@ public struct MainWindow: View {
                 }
             }
             .listStyle(.sidebar)
-            .navigationTitle(PhoneBackupCore.applicationName)
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 280)
-            .safeAreaInset(edge: .top) {
-                HStack(spacing: 10) {
-                    AppEmblem().frame(width: 32, height: 32)
-                    Text("PhoneBackup").font(.headline)
-                    Spacer()
-                }.padding(.horizontal, 16).padding(.vertical, 18)
-            }
             .safeAreaInset(edge: .bottom) {
                 HStack {
                     if !model.hasADB {
-                        Button("Set Up Connection…") { showingADBPanel = true }.disabled(model.isBusy)
+                        Button("Set Up Connection…") { showingADBSetup = true }.disabled(model.isBusy)
                     } else {
                         SettingsLink { Label("Settings", systemImage: "gearshape") }
                     }
@@ -86,6 +78,15 @@ public struct MainWindow: View {
         }
         .tint(AppIdentity.blue)
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                HStack(spacing: 8) {
+                    AppEmblem().frame(width: 23, height: 23)
+                    Text(PhoneBackupCore.applicationName)
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                }
+                .fixedSize()
+                .accessibilityElement(children: .combine)
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     Task { await model.refreshDevices() }
@@ -102,7 +103,7 @@ public struct MainWindow: View {
             LocalExportReviewSheet()
         }
         .sheet(isPresented: $model.isShowingCopyReview) { CopyReviewSheet() }
-        .alert("PhoneBackup", isPresented: Binding(
+        .alert(PhoneBackupCore.applicationName, isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.clearStatus() } }
         )) {
@@ -110,12 +111,7 @@ public struct MainWindow: View {
         } message: {
             Text(model.errorMessage ?? "")
         }
-        .fileImporter(isPresented: $showingADBPanel, allowedContentTypes: [.unixExecutable], allowsMultipleSelection: false) { result in
-            switch result {
-            case .success(let urls): if let url = urls.first { model.locateADB(at: url) }
-            case .failure(let error): model.reportError(error.localizedDescription)
-            }
-        }
+        .sheet(isPresented: $showingADBSetup) { ADBSetupView() }
     }
 
     private var showsOperationStatus: Bool {

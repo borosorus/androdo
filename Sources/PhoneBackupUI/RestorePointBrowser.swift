@@ -24,7 +24,7 @@ struct RestorePointBrowser: View {
                         Button("Export…") { chooseExportFolder() }
                             .disabled(model.selectedRestoreRoots.isEmpty || model.isBusy)
                         Spacer(minLength: 0)
-                    }.controlSize(.small)
+                    }
                 }.padding(18)
                 Divider()
                 if model.restoreEntries.isEmpty {

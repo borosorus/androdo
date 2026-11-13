@@ -1,6 +1,6 @@
 # Native macOS app
 
-PhoneBackup is a SwiftUI macOS app for selective Android shared-file backups,
+Androdo is a SwiftUI macOS app for selective Android shared-file backups,
 verified restore, and direct file copy. It is a separate native app from the
 Python command-line tools documented in the root README. It does not back up
 Android app-private data, apps, settings, or the operating system.
@@ -9,27 +9,27 @@ Android app-private data, apps, settings, or the operating system.
 
 - Apple Silicon Mac running macOS 14 or later.
 - Full Xcode with its command-line tools selected (`xcode-select -p`).
-- Android Platform Tools installed separately. On this Mac, `brew install
-  android-platform-tools` installs ADB. PhoneBackup does not bundle ADB.
+- Android Platform Tools installed separately. On this Mac, `brew install --cask
+  android-platform-tools` installs ADB. Androdo does not bundle ADB.
 
 ## Build and run from source
 
 ```sh
 swift --version
 swift test
-swift run PhoneBackupApp
+swift run Androdo
 ```
 
 To build a local, ad-hoc-signed app bundle for Apple Silicon:
 
 ```sh
 macos/build-app.sh
-open dist/PhoneBackup.app
+open dist/Androdo.app
 ```
 
 The script builds the SwiftPM executable for `arm64-apple-macosx14.0`, packages
 only that executable and the app's `Info.plist`, and verifies its ad-hoc
-signature. It draws and packages an original app icon locally. It replaces only `dist/PhoneBackup.app`. It does not copy ADB,
+signature. It draws and packages an original app icon locally. It replaces only `dist/Androdo.app`. It does not copy ADB,
 Python sources, backup repositories, or phone files into the bundle. The
 generated `dist/` directory is ignored by Git.
 
@@ -40,27 +40,39 @@ outside v1.
 
 ## Set up ADB
 
-PhoneBackup checks common Android SDK and Homebrew locations and the current
-`PATH`. If it cannot find ADB, select **Locate ADB…** in the app and choose the
-`adb` executable from **PhoneBackup → Settings…** (or **Set Up Connection…**
-when ADB is missing), commonly:
+Androdo checks common Android SDK and Homebrew locations and the current
+`PATH`. **Set Up Connection…** in Overview opens a guide explaining ADB,
+Google’s [Platform Tools download](https://developer.android.com/tools/releases/platform-tools),
+and USB debugging/authorization. Android Studio is not required.
 
-```text
-/opt/homebrew/bin/adb
+Download Platform Tools for Mac from Google, unzip it into a permanent folder,
+then choose **Locate ADB…** and select `platform-tools/adb`. If you already use
+Homebrew, the guide can copy this command for you to run in Terminal:
+
+```sh
+brew install --cask android-platform-tools
 ```
 
-The app remembers that path. If ADB moves or stops working, use **Change ADB…**
-to choose its current location. To confirm the phone connection independently,
-run `adb devices -l`, unlock the phone, and accept Android's USB debugging
-prompt. Device discovery does not enumerate phone folders; folder contents are
-listed only after you open a folder in the app.
+**Check Again** searches for a new installation without restarting the app.
+For a custom location, use **Locate ADB…**. The guide remains available under
+**Androdo → Settings… → Connection Setup…**. It does not run installers or
+Homebrew itself. The app remembers a selected executable's path.
+
+Enable Developer options and USB debugging on the phone, connect it by USB,
+and accept its authorization prompt for this Mac. Discovery and Check Again
+only enumerate connected devices; folder contents are listed after you open
+a folder. Saved backups remain accessible offline.
+
+The stable bundle identifier and internal repository directory (`PhoneBackup`)
+are retained so the display-name change preserves existing preferences and
+backup locations. Source module names and Python CLI commands are unchanged.
 
 ## First use
 
 Choose a local or external folder for the app-managed backup repository. The
 repository contains immutable restore points and is not a Finder mirror of the
 latest phone files. Select the phone folders you want, review the size and
-scope, then confirm **Back Up Now**. The app verifies copied bytes before it
+scope, then confirm **Back Up…**. The app verifies copied bytes before it
 marks files complete.
 
 Use **Files** for direct copies. Mac-to-phone drops and button copies show a

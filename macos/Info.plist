@@ -5,17 +5,18 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>PhoneBackup</string>
+	<string>Androdo</string>
 	<key>CFBundleExecutable</key>
-	<string>PhoneBackupApp</string>
+	<string>Androdo</string>
+	<!-- Stable identity preserves existing local preferences and bookmarks. -->
 	<key>CFBundleIdentifier</key>
 	<string>app.bestest.PhoneBackup</string>
 	<key>CFBundleIconFile</key>
-	<string>PhoneBackup</string>
+	<string>Androdo</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>PhoneBackup</string>
+	<string>Androdo</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

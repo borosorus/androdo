@@ -24,9 +24,17 @@ public final class RemoteBrowserModel {
 
     public init(remote: (any RemoteFileAccess)? = nil) { self.remote = remote }
 
-    public func updateRemote(_ remote: (any RemoteFileAccess)?) {
+    /// Transport replacement can retain the last displayed listing for the same device.
+    /// In-flight requests are invalidated; a subsequent device change still resets everything.
+    public func updateRemote(_ remote: (any RemoteFileAccess)?, preservingListing: Bool = false) {
         self.remote = remote
-        reset()
+        if preservingListing {
+            generation += 1
+            isLoading = false
+            errorMessage = nil
+        } else {
+            reset()
+        }
     }
 
     public func setDevice(_ device: AndroidDevice?) {

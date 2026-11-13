@@ -105,7 +105,7 @@ struct PhoneFilesView: View {
                 if browser.selection.count == 1, let path = browser.selection.first,
                    let entry = browser.entries.first(where: { $0.path == path }),
                    let deviceID = browser.device?.id, entry.kind == .file || entry.kind == .directory {
-                    RemoteFilePromiseDragSource(entries: [entry], deviceID: deviceID, model: model).frame(width: 145, height: 30)
+                    RemoteFilePromiseDragSource(entries: [entry], deviceID: deviceID, model: model).frame(width: 155, height: 34)
                         .accessibilityLabel("Drag selected item to Finder")
                 }
                 Button("Copy to Mac…") { choosePhoneExportDestination() }

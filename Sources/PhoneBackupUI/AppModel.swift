@@ -59,6 +59,7 @@ public final class AppModel {
     public private(set) var statusMessage: String?
 
     @ObservationIgnored private var services: AppServices
+    @ObservationIgnored private let adbResolver: (URL?) -> URL?
     @ObservationIgnored private let preferences: AppPreferences
     @ObservationIgnored private let locationAccess: BackupLocationAccess
     @ObservationIgnored private var planningTask: Task<BackupPlan, Error>?
@@ -84,7 +85,9 @@ public final class AppModel {
 
     public init(services: AppServices = .live(), preferences: AppPreferences = .standard,
                 locationAccess: BackupLocationAccess = BackupLocationAccess(),
-                activityStore: ActivityStore = ActivityStore(), loadOnStart: Bool = true) {
+                activityStore: ActivityStore = ActivityStore(), loadOnStart: Bool = true,
+                adbResolver: @escaping (URL?) -> URL? = { ADBExecutableResolver.resolve(preferredExecutable: $0) }) {
+        self.adbResolver = adbResolver
         self.services = services
         self.preferences = preferences
         self.locationAccess = locationAccess
@@ -226,10 +229,30 @@ public final class AppModel {
             errorMessage = "Choose an executable ADB file, then try again."
             return
         }
-        preferences.adbExecutablePath = url.standardizedFileURL.path
-        services = services.usingADB(at: url)
-        fileBrowser.updateRemote(services.remoteAccess)
+        configureADB(at: url)
         Task { await refreshDevices() }
+    }
+
+    /// Rediscovers tools installed after launch. Device discovery never opens phone folders.
+    public func recheckADB() async {
+        guard !isBusy else { return }
+        let preferred = preferences.adbExecutablePath.map { URL(fileURLWithPath: $0) }
+        if let executable = adbResolver(preferred), ADBExecutableResolver.isExecutableFile(at: executable) {
+            configureADB(at: executable)
+            await refreshDevices()
+        } else {
+            services = AppServices(repositoryStore: services.repositoryStore)
+            fileBrowser.updateRemote(nil)
+            await refreshDevices()
+            errorMessage = "ADB wasn’t found. Install Platform Tools or locate the adb file, then check again."
+        }
+    }
+
+    private func configureADB(at url: URL) {
+        preferences.adbExecutablePath = url.standardizedFileURL.path
+        guard services.adbExecutable?.standardizedFileURL != url.standardizedFileURL || !hasADB else { return }
+        services = services.usingADB(at: url)
+        fileBrowser.updateRemote(services.remoteAccess, preservingListing: true)
     }
 
     public func browseFiles() async {

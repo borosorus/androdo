@@ -1,8 +1,11 @@
-# PhoneBackup / Bestest ADB Sync
+# Androdo
 
-[![tests](https://github.com/BuildWithDuke/bestest-adb-sync/actions/workflows/tests.yml/badge.svg)](https://github.com/BuildWithDuke/bestest-adb-sync/actions/workflows/tests.yml)
+[![tests](https://github.com/borosorus/androdo/actions/workflows/tests.yml/badge.svg)](https://github.com/borosorus/androdo/actions/workflows/tests.yml)
 
-An Android backup CLI and an [rsync](https://wiki.archlinux.org/title/rsync)-like program to sync files between a computer and an Android device
+A native macOS app for Android file backups, restore, and transfer. See the
+[Mac app guide](macos/README.md) for setup and building.
+
+This repository also contains the original Android backup CLI and an [rsync](https://wiki.archlinux.org/title/rsync)-like program to sync files between a computer and an Android device
 
 > **This is a modified fork.**
 > It is based on [jb2170/better-adb-sync](https://github.com/jb2170/better-adb-sync)
@@ -73,8 +76,8 @@ the Python CLI sections below remain separate.
 From source:
 
 ```
-$ git clone https://github.com/BuildWithDuke/bestest-adb-sync
-$ cd bestest-adb-sync
+$ git clone https://github.com/borosorus/androdo
+$ cd androdo
 $ pip install .
 ```
 

@@ -50,7 +50,7 @@ final class PromiseDragHandleView: NSView, NSDraggingSource, NSFilePromiseProvid
         let image = NSImage(systemSymbolName: "arrow.up.doc", accessibilityDescription: nil)
         image?.draw(in: NSRect(x: 9, y: (bounds.height - 14) / 2, width: 14, height: 14))
         ("Drag to Finder" as NSString).draw(at: NSPoint(x: 29, y: (bounds.height - 14) / 2),
-                                             withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor])
+                                             withAttributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
     }
 
     override func mouseDown(with event: NSEvent) { dragStarted = false }

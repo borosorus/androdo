@@ -77,6 +77,7 @@ struct ReviewSheetLayout<Content: View, Footer: View>: View {
             .padding(.vertical, 16)
         }
         .frame(minWidth: minimumWidth, minHeight: minimumHeight)
+        .controlSize(.large)
     }
 }
 

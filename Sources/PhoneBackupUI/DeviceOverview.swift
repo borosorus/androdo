@@ -4,6 +4,7 @@ import SwiftUI
 struct DeviceOverview: View {
     @Environment(AppModel.self) private var model
     @State private var showingSelection = false
+    @State private var showingADBSetup = false
 
     var body: some View {
         ScrollView {
@@ -11,7 +12,11 @@ struct DeviceOverview: View {
                 DeviceBackupHero(name: model.selectedDevice?.model ?? "Your Android",
                                  status: deviceStatus,
                                  connected: model.selectedDevice?.state == .device) {
-                    if model.isPlanningBackup {
+                    if !model.hasADB {
+                        Button("Set Up Connection…") { showingADBSetup = true }
+                            .buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue)
+                            .disabled(model.isBusy)
+                    } else if model.isPlanningBackup {
                         HStack {
                             ProgressView().controlSize(.small)
                             Text("Preparing…").foregroundStyle(.secondary)
@@ -22,7 +27,6 @@ struct DeviceOverview: View {
                             Label("Back Up…", systemImage: "arrow.down.to.line")
                         }
                         .buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue)
-                        .controlSize(.large)
                         .disabled(model.isBusy || model.backupLocation == nil || model.selectedDevice?.state != .device)
                     }
                 }
@@ -41,7 +45,7 @@ struct DeviceOverview: View {
                         Button(model.backupLocation == nil ? "Choose…" : "Change…") {
                             guard let folder = NativeFilePanels.chooseFolder(
                                 prompt: "Choose Backup Folder",
-                                message: "PhoneBackup creates a device repository inside this folder.") else { return }
+                                message: "Androdo creates a device repository inside this folder.") else { return }
                             Task { await model.chooseBackupLocation(folder) }
                         }.disabled(model.isBusy)
                     }
@@ -82,6 +86,7 @@ struct DeviceOverview: View {
         }
         .navigationTitle("Overview")
         .sheet(isPresented: $showingSelection) { BackupSelectionEditor() }
+        .sheet(isPresented: $showingADBSetup) { ADBSetupView() }
     }
 
     private var deviceStatus: String {

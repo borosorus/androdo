@@ -67,7 +67,7 @@ struct OverviewDesignPreview: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             DeviceBackupHero(name: "Pixel 9", status: "Connected", connected: true) {
-                Button("Back Up…") {}.buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue).controlSize(.large)
+                Button("Back Up…") {}.buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue)
             }
             VStack(spacing: 0) {
                 OverviewSettingRow(title: "Back up to", symbol: "externaldrive.fill") {
@@ -91,5 +91,6 @@ struct OverviewDesignPreview: View {
         .frame(width: 790, height: 570)
         .background(Color(nsColor: .windowBackgroundColor))
         .tint(AppIdentity.blue)
+        .controlSize(.large)
     }
 }

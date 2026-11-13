@@ -3,12 +3,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "PhoneBackup",
+    name: "Androdo",
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "PhoneBackupCore", targets: ["PhoneBackupCore"]),
         .library(name: "PhoneBackupUI", targets: ["PhoneBackupUI"]),
-        .executable(name: "PhoneBackupApp", targets: ["PhoneBackupApp"]),
+        .executable(name: "Androdo", targets: ["PhoneBackupApp"]),
     ],
     targets: [
         .target(name: "PhoneBackupCore"),

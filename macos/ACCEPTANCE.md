@@ -15,7 +15,7 @@ checks, copied into the app, or committed.
 
 ## Manual Mac checks
 
-- [ ] Launch `dist/PhoneBackup.app` without a connected phone; observe the main
+- [ ] Launch `dist/Androdo.app` without a connected phone; observe the main
       window and the ADB recovery control.
 - [ ] Select an executable fake or installed ADB; use **Change ADB…** to switch
       paths; verify an invalid selection leaves the previous working path saved.
@@ -50,3 +50,13 @@ Record the selected folder, app build, observed outcomes, and any skipped check
 without recording fixture contents. Permission-denied behavior, external-volume
 reconnects, Finder promise behavior, accessibility, and appearance are device
 and Mac dependent; do not claim them tested until observed.
+
+## Androdo setup and control polish
+
+- [ ] App menu, About, Finder bundle, alerts, and Settings use Androdo.
+- [ ] App name/emblem appears in the native toolbar; no detached sidebar banner.
+- [ ] Main actions, review sheets, Settings, and file actions use consistent larger native controls.
+- [ ] With no ADB configured, Overview and the sidebar open the same guided setup.
+- [ ] Guide links to Google's Platform Tools/USB-debugging documentation and can copy the Homebrew command.
+- [ ] After installing outside the app, Check Again discovers ADB; a custom location works through Locate ADB.
+- [ ] Discovery failure remains visible inside the guide, even without the main window.
