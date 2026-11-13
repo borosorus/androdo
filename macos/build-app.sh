@@ -26,7 +26,9 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 ICON_WORK="$(mktemp -d "${TMPDIR:-/tmp}/androdo-icon.XXXXXX")"
 trap 'rm -rf "$ICON_WORK"' EXIT
-swift "$ROOT/macos/GenerateAppIcon.swift" "$ICON_WORK/Androdo.iconset"
+swiftc -parse-as-library "$ROOT/Sources/PhoneBackupUI/AndrodoMarkGeometry.swift" \
+    "$ROOT/macos/GenerateAppIcon.swift" -o "$ICON_WORK/generate-icon"
+"$ICON_WORK/generate-icon" "$ICON_WORK/Androdo.iconset"
 iconutil -c icns "$ICON_WORK/Androdo.iconset" -o "$APP_BUNDLE/Contents/Resources/Androdo.icns"
 install -m 755 "$EXECUTABLE" "$APP_BUNDLE/Contents/MacOS/Androdo"
 install -m 644 "$ROOT/macos/Info.plist" "$APP_BUNDLE/Contents/Info.plist"

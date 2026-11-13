@@ -62,3 +62,29 @@ the current library selection may belong to another device and cannot supply
 that fact without matching it first. Keep all generated fixture values out of the
 production app. Validate the real window and toolbar with the sidebar expanded
 and collapsed before considering the design implemented.
+
+## Capture the implemented native window with fictional data
+
+The separate `NativePreview` development package uses the real `MainWindow`
+with a fake repository/transport, an isolated preferences suite, and its own
+fresh temporary folder. It never constructs live ADB services or reads standard
+preferences. It captures only its own window's NSView hierarchy, cleans up its
+fixture, and exits; it does not take a desktop screenshot.
+
+```sh
+macos/design/render-native-preview.sh /private/tmp/androdo-native-overview.png
+macos/design/render-native-preview.sh /private/tmp/androdo-native-dark.png --compact --dark
+macos/design/render-native-preview.sh /private/tmp/androdo-native-collapsed.png --collapsed
+macos/design/render-native-preview.sh /private/tmp/androdo-native-first-use.png --compact --first-use
+macos/design/render-native-preview.sh /private/tmp/androdo-native-backups.png --compact --backups
+```
+
+This opens a temporary preview app window briefly. The requested standard/compact size describes the usable content area; native
+titlebar height is added so the minimum SwiftUI height is never clipped. Use
+`--long-name` to check wrapping with an intentionally long device name.
+
+Full Xcode/Swift and a logged-in
+macOS desktop session are required. The root package does not include this
+executable in the Androdo app bundle. These captures show implemented native
+layout, but do not exercise VoiceOver, keyboard interaction, actual phone access
+or replacement/recovery operations. Fictional counts are for visual layout only.

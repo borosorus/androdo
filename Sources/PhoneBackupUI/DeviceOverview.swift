@@ -12,23 +12,11 @@ struct DeviceOverview: View {
                 DeviceBackupHero(name: model.selectedDevice?.model ?? "Your Android",
                                  status: deviceStatus,
                                  connected: model.selectedDevice?.state == .device) {
-                    if !model.hasADB {
-                        Button("Set Up Connection…") { showingADBSetup = true }
-                            .buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue)
-                            .disabled(model.isBusy)
-                    } else if model.isPlanningBackup {
-                        HStack {
-                            ProgressView().controlSize(.small)
-                            Text("Preparing…").foregroundStyle(.secondary)
-                            Button("Cancel") { model.cancelPlanning() }.keyboardShortcut(.cancelAction)
-                        }
-                    } else {
-                        Button { Task { await model.reviewBackup() } } label: {
-                            Label("Back Up…", systemImage: "arrow.down.to.line")
-                        }
-                        .buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue)
-                        .disabled(model.isBusy || model.backupLocation == nil || model.selectedDevice?.state != .device)
+                    DeviceBackupSummaryView(state: model.deviceBackupSummary, canRetry: !model.isBusy) {
+                        Task { await model.retryDeviceBackupSummary() }
                     }
+                } action: {
+                    primaryAction
                 }
 
                 if let message = model.statusMessage, model.selectedDevice != nil { MessageBanner(text: message) }
@@ -37,20 +25,18 @@ struct DeviceOverview: View {
                     OverviewSettingRow(title: "Back up to", symbol: "externaldrive.fill") {
                         if let location = model.backupLocation {
                             Text(location.lastPathComponent).fontWeight(.medium)
-                            Text(location.path).font(.caption).lineLimit(2).textSelection(.enabled)
+                            DisclosureGroup("Show location") {
+                                Text(location.path).font(.caption).textSelection(.enabled)
+                            }.font(.caption)
                         } else {
                             Text("Choose a backup folder")
                         }
                     } action: {
-                        Button(model.backupLocation == nil ? "Choose…" : "Change…") {
-                            guard let folder = NativeFilePanels.chooseFolder(
-                                prompt: "Choose Backup Folder",
-                                message: "Androdo creates a device repository inside this folder.") else { return }
-                            Task { await model.chooseBackupLocation(folder) }
-                        }.disabled(model.isBusy)
+                        Button(model.backupLocation == nil ? "Choose…" : "Change…") { chooseBackupFolder() }
+                            .disabled(model.isBusy)
                     }
                     Divider().padding(.leading, 72)
-                    OverviewSettingRow(title: "Included folders", symbol: "folder.fill", color: AppIdentity.teal) {
+                    OverviewSettingRow(title: "Included files", symbol: "folder.fill", color: AppIdentity.teal) {
                         Text(selectionTitle)
                         if !selectionPathRows.isEmpty {
                             DisclosureGroup(selectionDisclosureTitle) {
@@ -73,9 +59,22 @@ struct DeviceOverview: View {
 
                 HStack(spacing: 12) {
                     Image(systemName: "clock.arrow.circlepath").foregroundStyle(AppIdentity.copper)
-                    Text("Backup history").font(.callout.weight(.medium))
+                    VStack(alignment: .leading, spacing: 4) {
+                        if case .loaded(let summary) = model.deviceBackupSummary {
+                            Text(summary.points.count == 1 ? "1 restore point" : "\(summary.points.count) restore points").font(.callout.weight(.medium))
+                            if summary.incompleteCount > 0 {
+                                Text("\(summary.points.count - summary.incompleteCount) complete · \(summary.incompleteCount) incomplete")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Text("Backup library").font(.callout.weight(.medium))
+                        }
+                    }
                     Spacer()
-                    Button("Browse Backups") { model.section = .backups }
+                    Button(model.backupLocation == nil ? "Open Backup Folder…" : "Browse Backups") {
+                        if model.backupLocation == nil { chooseBackupFolder() }
+                        else { Task { await model.browseDeviceBackups() } }
+                    }.disabled(model.isBusy)
                 }.padding(.horizontal, 18)
 
             }
@@ -89,11 +88,60 @@ struct DeviceOverview: View {
         .sheet(isPresented: $showingADBSetup) { ADBSetupView() }
     }
 
+    @ViewBuilder
+    private var primaryAction: some View {
+        if model.isPlanningBackup {
+            HStack {
+                ProgressView().controlSize(.small)
+                Button("Cancel") { model.cancelPlanning() }.keyboardShortcut(.cancelAction)
+            }
+        } else if model.isBusy {
+            Text(model.isOperationRunning ? "Operation in progress…" : "Preparing…")
+                .font(.callout).foregroundStyle(.secondary)
+        } else {
+            Button {
+                switch readiness {
+                case .connection: showingADBSetup = true
+                case .location: chooseBackupFolder()
+                case .selection: showingSelection = true
+                case .ready: Task { await model.reviewBackup() }
+                case .busy: break
+                }
+            } label: {
+                Text(primaryActionTitle)
+            }
+            .buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue)
+        }
+    }
+
+    private var readiness: BackupReadiness {
+        BackupReadiness.resolve(hasADB: model.hasADB, device: model.selectedDevice,
+                                hasLocation: model.backupLocation != nil,
+                                needsLocationRecovery: model.backupLocationNeedsAttention,
+                                selection: model.backupSelection, isBusy: model.isBusy)
+    }
+
+    private var primaryActionTitle: String {
+        switch readiness {
+        case .connection: "Set Up Connection…"
+        case .location: "Choose Backup Folder…"
+        case .selection: "Choose Files…"
+        case .ready: "Back Up…"
+        case .busy: "Preparing…"
+        }
+    }
+
+    private func chooseBackupFolder() {
+        guard let folder = NativeFilePanels.chooseFolder(prompt: "Choose Backup Folder",
+                                                        message: "Androdo creates a device repository inside this folder.") else { return }
+        Task { await model.chooseBackupLocation(folder) }
+    }
+
     private var deviceStatus: String {
         guard model.hasADB else { return "Set up the Android connection to get started." }
         guard let device = model.selectedDevice else { return "Connect your phone by USB." }
         return switch device.state {
-        case .device: "Connected"
+        case .device: "Connected by USB"
         case .unauthorized: "Unlock the phone and allow USB debugging."
         case .offline: "The phone is offline. Reconnect the USB cable."
         case .bootloader, .recovery, .sideload: "Android is in a maintenance mode. Restart it to browse shared files."

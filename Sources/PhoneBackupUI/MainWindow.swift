@@ -4,14 +4,17 @@ import SwiftUI
 
 public struct MainWindow: View {
     @Environment(AppModel.self) private var model
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showingADBSetup = false
     @State private var showingOmissionConfirmation = false
 
-    public init() {}
+    public init(initialColumnVisibility: NavigationSplitViewVisibility = .all) {
+        _columnVisibility = State(initialValue: initialColumnVisibility)
+    }
 
     public var body: some View {
         @Bindable var model = model
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             List(selection: Binding<AppSection?>(get: { model.section }, set: { section in if let section { model.section = section } })) {
                 Section {
                     Label { Text("Overview") } icon: { SidebarGlyph(symbol: "rectangle.portrait", color: AppIdentity.blue) }.tag(AppSection.device)
@@ -38,7 +41,7 @@ public struct MainWindow: View {
                 }
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 280)
+            .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 320)
             .safeAreaInset(edge: .bottom) {
                 HStack {
                     if !model.hasADB {
@@ -76,17 +79,12 @@ public struct MainWindow: View {
                 Text("The restore point will be marked incomplete and will list the paths that could not be saved.")
             }
         }
+        .background {
+            WindowTitlebarBranding(columnVisibility: $columnVisibility).frame(width: 0, height: 0)
+        }
+        .toolbar(removing: .sidebarToggle)
         .tint(AppIdentity.blue)
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                HStack(spacing: 8) {
-                    AppEmblem().frame(width: 23, height: 23)
-                    Text(PhoneBackupCore.applicationName)
-                        .font(.system(size: 16, weight: .semibold, design: .rounded))
-                }
-                .fixedSize()
-                .accessibilityElement(children: .combine)
-            }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     Task { await model.refreshDevices() }

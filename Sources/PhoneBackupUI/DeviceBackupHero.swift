@@ -1,42 +1,50 @@
 import SwiftUI
 
-struct DeviceBackupHero<Action: View>: View {
+struct DeviceBackupHero<Summary: View, Action: View>: View {
     let name: String
     let status: String
     let connected: Bool
+    @ViewBuilder let summary: () -> Summary
     @ViewBuilder let action: () -> Action
 
     var body: some View {
-        HStack(spacing: 28) {
-            DeviceIllustration(connected: connected)
-            VStack(alignment: .leading, spacing: 14) {
-                Text("YOUR ANDROID").font(.caption.weight(.semibold)).tracking(1.5).foregroundStyle(.secondary)
-                Text(name).font(.system(size: 30, weight: .semibold, design: .rounded)).fixedSize(horizontal: false, vertical: true)
-                Label {
-                    Text(status).foregroundStyle(.secondary)
-                } icon: {
-                    Image(systemName: connected ? "checkmark.circle.fill" : "cable.connector")
-                        .foregroundStyle(connected ? AppIdentity.teal : Color.secondary)
-                }
-                    .font(.callout)
-                    .fixedSize(horizontal: false, vertical: true)
-                action().padding(.top, 6)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 24) {
+                DeviceIllustration(connected: connected)
+                VStack(alignment: .leading, spacing: 20) {
+                    identity
+                    summary()
+                }.frame(minWidth: 190, maxWidth: .infinity, alignment: .leading)
+                action().fixedSize(horizontal: true, vertical: false)
             }
-            Spacer(minLength: 0)
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: 22)
-                .fill(.background)
-                .overlay(alignment: .topTrailing) {
-                    RoundedRectangle(cornerRadius: 22)
-                        .fill(LinearGradient(colors: [AppIdentity.teal.opacity(0.06), .clear], startPoint: .topTrailing, endPoint: .bottomLeading))
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 20) {
+                    DeviceIllustration(connected: connected)
+                    identity
                 }
+                summary()
+                action()
+            }
         }
-        .overlay { RoundedRectangle(cornerRadius: 22).strokeBorder(.primary.opacity(0.06)) }
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var identity: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text(name).font(.system(size: 27, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
+            Label {
+                Text(status).foregroundStyle(.secondary)
+            } icon: {
+                Image(systemName: connected ? "circle.fill" : "cable.connector")
+                    .font(connected ? .system(size: 6) : .callout)
+                    .foregroundStyle(connected ? AppIdentity.teal : Color.secondary)
+            }
+            .font(.callout).fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
+
 
 struct OverviewSettingRow<Content: View, Action: View>: View {
     let title: String
@@ -66,7 +74,13 @@ struct OverviewSettingRow<Content: View, Action: View>: View {
 struct OverviewDesignPreview: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            DeviceBackupHero(name: "Pixel 9", status: "Connected", connected: true) {
+            DeviceBackupHero(name: "Pixel 9", status: "Connected by USB", connected: true) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Latest complete backup").font(.caption).foregroundStyle(.secondary)
+                    Text("Today, 10:42").font(.headline)
+                    Text("128 items · 842 MB").font(.caption).foregroundStyle(.secondary)
+                }
+            } action: {
                 Button("Back Up…") {}.buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue)
             }
             VStack(spacing: 0) {

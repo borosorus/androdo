@@ -29,7 +29,7 @@ open dist/Androdo.app
 
 The script builds the SwiftPM executable for `arm64-apple-macosx14.0`, packages
 only that executable and the app's `Info.plist`, and verifies its ad-hoc
-signature. It draws and packages an original app icon locally. It replaces only `dist/Androdo.app`. It does not copy ADB,
+signature. It compiles the shared folded-A vector geometry into an original app icon locally. It replaces only `dist/Androdo.app`. It does not copy ADB,
 Python sources, backup repositories, or phone files into the bundle. The
 generated `dist/` directory is ignored by Git.
 
@@ -105,7 +105,7 @@ A standalone Overview composition uses fictional device/folder names and never
 creates an AppModel, opens a repository, or connects to a phone:
 
 ```sh
-swiftc -parse-as-library Sources/PhoneBackupUI/PhoneBackupIdentity.swift Sources/PhoneBackupUI/DeviceBackupHero.swift macos/RenderDesignPreview.swift -o /private/tmp/phonebackup-design-preview
+swiftc -parse-as-library Sources/PhoneBackupUI/AndrodoMarkGeometry.swift Sources/PhoneBackupUI/PhoneBackupIdentity.swift Sources/PhoneBackupUI/DeviceBackupHero.swift macos/RenderDesignPreview.swift -o /private/tmp/phonebackup-design-preview
 /private/tmp/phonebackup-design-preview /private/tmp/phonebackup-overview-light.png
 /private/tmp/phonebackup-design-preview /private/tmp/phonebackup-overview-dark.png --dark
 ```
@@ -113,3 +113,9 @@ swiftc -parse-as-library Sources/PhoneBackupUI/PhoneBackupIdentity.swift Sources
 These are composition previews, not screenshots or interactive acceptance of
 the running app. Settings displays the packaged Git revision; a `-modified`
 suffix means it was built with uncommitted source changes.
+
+The implemented full native window can also be captured with isolated fictional
+fixtures; see [the native fixture renderer](design/README.md#capture-the-implemented-native-window-with-fictional-data).
+The folded-A glyph and Dock icon share `AndrodoMarkGeometry.swift`. Overview's
+latest-complete-backup summary belongs to the displayed device, independently
+of the repository selected in the backup library.

@@ -207,11 +207,38 @@ public actor FakeBackupRepositoryStore: BackupRepositoryWriting {
     private var objects: [RepositoryID: [String: Data]] = [:]
     private var attempts: [BackupAttemptID: StoredAttempt] = [:]
     private var stagingDelayForTesting: Duration?
+    private var failNextOpenForTesting = false
+    private var pausedRestoreReads: Set<RepositoryID> = []
+    private var restoreReadGates: [RepositoryID: [CheckedContinuation<Void, Never>]] = [:]
+    private var restoreReadWaiters: [RepositoryID: [CheckedContinuation<Void, Never>]] = [:]
+    private var failingRestoreReads: Set<RepositoryID> = []
 
     public init() {}
 
     public func delayStagingForTesting(_ duration: Duration?) {
         stagingDelayForTesting = duration
+    }
+
+    public func failNextRepositoryOpenForTesting() { failNextOpenForTesting = true }
+
+    public func pauseRestorePointReadsForTesting(in repository: RepositoryID) {
+        pausedRestoreReads.insert(repository)
+    }
+
+    public func waitForPausedRestorePointRead(in repository: RepositoryID) async {
+        if !(restoreReadGates[repository] ?? []).isEmpty { return }
+        await withCheckedContinuation { restoreReadWaiters[repository, default: []].append($0) }
+    }
+
+    public func resumeRestorePointReadsForTesting(in repository: RepositoryID, failing: Bool = false) {
+        pausedRestoreReads.remove(repository)
+        if failing { failingRestoreReads.insert(repository) }
+        let gates = restoreReadGates.removeValue(forKey: repository) ?? []
+        gates.forEach { $0.resume() }
+    }
+
+    public func failNextRestorePointReadForTesting(in repository: RepositoryID) {
+        failingRestoreReads.insert(repository)
     }
 
     public func seed(
@@ -223,6 +250,10 @@ public actor FakeBackupRepositoryStore: BackupRepositoryWriting {
     }
 
     public func openRepositories(in location: URL) async throws -> [BackupRepositoryInfo] {
+        if failNextOpenForTesting {
+            failNextOpenForTesting = false
+            throw EngineError.corruptedRepository("Fixture discovery failure")
+        }
         let root = location.standardizedFileURL
         return stored.values.map(\.0).filter {
             $0.location.deletingLastPathComponent().deletingLastPathComponent() == root
@@ -383,6 +414,14 @@ public actor FakeBackupRepositoryStore: BackupRepositoryWriting {
 
     public func restorePoints(in repository: RepositoryID) async throws -> [RestorePoint] {
         guard let value = stored[repository] else { throw EngineError.corruptedRepository("Unknown repository") }
+        if pausedRestoreReads.contains(repository) {
+            await withCheckedContinuation { continuation in
+                restoreReadGates[repository, default: []].append(continuation)
+                let waiters = restoreReadWaiters.removeValue(forKey: repository) ?? []
+                waiters.forEach { $0.resume() }
+            }
+        }
+        if failingRestoreReads.remove(repository) != nil { throw EngineError.corruptedRepository("Fixture read failure") }
         return value.1.sorted { $0.createdAt > $1.createdAt }
     }
 

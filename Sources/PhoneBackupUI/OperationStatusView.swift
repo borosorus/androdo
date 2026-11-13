@@ -21,8 +21,8 @@ struct OperationStatusView: View {
             if let event = model.operationEvent {
                 HStack(spacing: 12) {
                     if event.phase.isTerminal {
-                        Image(systemName: event.phase == .completed ? "checkmark.circle.fill" : "exclamationmark.circle")
-                            .foregroundStyle(event.phase == .completed ? AppIdentity.teal : Color.secondary)
+                        Image(systemName: event.phase == .completed && event.warnings.isEmpty ? "checkmark.circle.fill" : "exclamationmark.circle")
+                            .foregroundStyle(event.phase == .completed && event.warnings.isEmpty ? AppIdentity.teal : Color.secondary)
                     } else if event.phase == .scanning || event.phase == .planning {
                         ProgressView().controlSize(.small)
                     } else if let total = event.progress.totalBytes, total > 0 {
@@ -120,7 +120,7 @@ struct OperationStatusView: View {
         case .committing:
             if model.operationTitle?.localizedCaseInsensitiveContains("backup") == true { "Finishing restore point…" }
             else { "Publishing verified files…" }
-        case .completed: "Verified"
+        case .completed: model.operationEvent?.warnings.isEmpty == false ? "Finished with skipped paths" : "Verified"
         case .incomplete: "Incomplete"
         case .cancelled: "Cancelled"
         case .failed: "Failed"

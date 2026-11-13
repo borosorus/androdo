@@ -29,6 +29,7 @@ public final class AppModel {
     public private(set) var repositories: [BackupRepositoryInfo] = []
     public private(set) var selectedRepositoryID: RepositoryID?
     public private(set) var restorePoints: [RestorePoint] = []
+    public private(set) var deviceBackupSummary: DeviceBackupSummaryState = .noDevice
     public private(set) var selectedRestorePoint: RestorePoint?
     public private(set) var restoreEntries: [BackupEntry] = []
     public private(set) var selectedRestoreRoots: Set<RemotePath> = []
@@ -70,9 +71,14 @@ public final class AppModel {
     @ObservationIgnored private var activeCopyRequest: CopyRequest?
     @ObservationIgnored private var activeRestoreRequest: RestoreRequest?
     @ObservationIgnored private var contextGeneration = 0
+    @ObservationIgnored private var overviewRequest = UUID()
+    @ObservationIgnored private var loadedRepositoryLocation: URL?
 
     public var isOperationRunning: Bool { operationID != nil }
     public var isBusy: Bool { isPlanningBackup || isPlanningExport || isPlanningCopy || isStartingOperation || isOperationRunning || isRefreshingDevices }
+    public var backupLocationNeedsAttention: Bool {
+        requiresRepositoryRecoveryConfirmation || (backupLocation != nil && loadedRepositoryLocation != backupLocation)
+    }
     public var hasADB: Bool { services.deviceTransport != nil }
     public var adbExecutableURL: URL? { services.adbExecutable }
     public var selectedRepository: BackupRepositoryInfo? {
@@ -112,6 +118,7 @@ public final class AppModel {
             devices = []
             selectedDevice = nil
             fileBrowser.setDevice(nil)
+            await refreshDeviceBackupSummary()
             if services.adbExecutable == nil { statusMessage = "Android Debug Bridge was not found." }
             return
         }
@@ -128,10 +135,12 @@ public final class AppModel {
             }
             statusMessage = found.isEmpty ? "No Android device is connected." : nil
             errorMessage = nil
+            await refreshDeviceBackupSummary()
         } catch {
             devices = []
             selectedDevice = nil
             fileBrowser.setDevice(nil)
+            await refreshDeviceBackupSummary()
             errorMessage = UserFacingError.message(for: error)
         }
     }
@@ -140,6 +149,7 @@ public final class AppModel {
         guard !isBusy else { return }
         contextGeneration += 1
         selectedDevice = device
+        invalidateDeviceBackupSummary()
         fileBrowser.setDevice(device)
         loadSavedSelection(for: device.id)
         backupPlan = nil
@@ -166,6 +176,7 @@ public final class AppModel {
             selectedRestorePoint = nil
             restoreEntries = []
         }
+        Task { await refreshDeviceBackupSummary() }
     }
 
     public func setBackupSelection(_ selection: BackupSelection) {
@@ -199,6 +210,7 @@ public final class AppModel {
         guard !isBusy else { return }
         contextGeneration += 1
         resetRepositoryContext()
+        loadedRepositoryLocation = nil
         do {
             try await closeOpenRepositories()
             let bookmark = try locationAccess.select(url)
@@ -206,6 +218,7 @@ public final class AppModel {
             backupLocation = url.standardizedFileURL
             requiresRepositoryRecoveryConfirmation = false
             repositories = try await services.repositoryStore.openRepositories(in: url)
+            loadedRepositoryLocation = url.standardizedFileURL
             selectedRepositoryID = repositories.first(where: { $0.deviceID == selectedDevice?.id })?.id ?? repositories.first?.id
             preferences.knownRepositoryIDs = repositories.map { $0.id.id }
             if let selectedRepositoryID {
@@ -213,14 +226,18 @@ public final class AppModel {
                 await loadPendingAttempts(for: selectedRepositoryID)
             }
             else { restorePoints = []; selectedRestorePoint = nil; restoreEntries = [] }
+            await refreshDeviceBackupSummary()
             errorMessage = nil
         } catch {
+            invalidateDeviceBackupSummary()
+            deviceBackupSummary = .unavailable
             errorMessage = UserFacingError.message(for: error)
         }
     }
 
     public func authorizeNewRepositoryAtSelectedLocation() {
         requiresRepositoryRecoveryConfirmation = false
+        Task { await refreshDeviceBackupSummary() }
     }
 
     public func locateADB(at url: URL) {
@@ -284,6 +301,10 @@ public final class AppModel {
         }
         guard let backupLocation else {
             errorMessage = "Choose where to store this backup first."
+            return
+        }
+        guard !backupLocationNeedsAttention else {
+            errorMessage = "Locate the backup folder before starting a new backup."
             return
         }
         guard !backupSelection.normalizedRoots.isEmpty else {
@@ -731,6 +752,7 @@ public final class AppModel {
             let url = try locationAccess.resolve(bookmark)
             backupLocation = url
             repositories = try await services.repositoryStore.openRepositories(in: url)
+            loadedRepositoryLocation = url.standardizedFileURL
             let expected = Set(preferences.knownRepositoryIDs)
             let opened = Set(repositories.map { $0.id.id })
             requiresRepositoryRecoveryConfirmation = !expected.isEmpty && !expected.isSubset(of: opened)
@@ -778,6 +800,7 @@ public final class AppModel {
     }
 
     private func resetRepositoryContext() {
+        invalidateDeviceBackupSummary()
         selectedRepositoryID = nil
         restorePoints = []
         selectedRestorePoint = nil
@@ -788,6 +811,82 @@ public final class AppModel {
         recoveryWarnings = []
         restorePlan = nil
         isShowingExportReview = false
+    }
+
+    private func invalidateDeviceBackupSummary() {
+        overviewRequest = UUID()
+        deviceBackupSummary = selectedDevice == nil ? .noDevice : (backupLocation == nil ? .noLocation : .loading)
+    }
+
+    /// Overview facts are independent from library browsing and never enumerate phone files.
+    public func refreshDeviceBackupSummary() async {
+        let request = UUID()
+        overviewRequest = request
+        guard let device = selectedDevice else { deviceBackupSummary = .noDevice; return }
+        guard let location = backupLocation else { deviceBackupSummary = .noLocation; return }
+        guard !backupLocationNeedsAttention else { deviceBackupSummary = .unavailable; return }
+        guard let repository = repositories.first(where: { $0.deviceID == device.id }) else {
+            deviceBackupSummary = .loaded(DeviceBackupSummary(points: []))
+            return
+        }
+        deviceBackupSummary = .loading
+        do {
+            let points = try await services.repositoryStore.restorePoints(in: repository.id)
+            guard overviewRequest == request, selectedDevice?.id == device.id, backupLocation == location,
+                  repositories.first(where: { $0.deviceID == device.id })?.id == repository.id else { return }
+            deviceBackupSummary = .loaded(DeviceBackupSummary(points: points))
+        } catch {
+            guard overviewRequest == request, selectedDevice?.id == device.id, backupLocation == location,
+                  repositories.first(where: { $0.deviceID == device.id })?.id == repository.id else { return }
+            deviceBackupSummary = .unavailable
+        }
+    }
+
+    public func retryDeviceBackupSummary() async {
+        guard !isBusy else { return }
+        guard let location = backupLocation else { await refreshDeviceBackupSummary(); return }
+        guard loadedRepositoryLocation != location || requiresRepositoryRecoveryConfirmation else {
+            await refreshDeviceBackupSummary()
+            return
+        }
+        let request = UUID()
+        overviewRequest = request
+        let deviceID = selectedDevice?.id
+        let expected = Set(preferences.knownRepositoryIDs)
+        deviceBackupSummary = .loading
+        do {
+            let reopened = try await services.repositoryStore.openRepositories(in: location)
+            guard overviewRequest == request, backupLocation == location, selectedDevice?.id == deviceID else { return }
+            repositories = reopened
+            loadedRepositoryLocation = location
+            if requiresRepositoryRecoveryConfirmation && !expected.isSubset(of: Set(reopened.map { $0.id.id })) {
+                deviceBackupSummary = .unavailable
+                errorMessage = "The saved folder is missing known backup repositories. Locate the original folder or explicitly use this as a new location."
+                return
+            }
+            requiresRepositoryRecoveryConfirmation = false
+            preferences.knownRepositoryIDs = reopened.map { $0.id.id }
+            errorMessage = nil
+            if !reopened.contains(where: { $0.id == selectedRepositoryID }) {
+                if let repository = reopened.first(where: { $0.deviceID == deviceID }) ?? reopened.first {
+                    await selectRepository(repository.id)
+                    guard overviewRequest == request, backupLocation == location, selectedDevice?.id == deviceID else { return }
+                } else {
+                    resetRepositoryContext()
+                }
+            }
+            await refreshDeviceBackupSummary()
+        } catch {
+            guard overviewRequest == request, backupLocation == location, selectedDevice?.id == deviceID else { return }
+            deviceBackupSummary = .unavailable
+        }
+    }
+
+    public func browseDeviceBackups() async {
+        section = .backups
+        if let device = selectedDevice, let repository = repositories.first(where: { $0.deviceID == device.id }) {
+            await selectRepository(repository.id)
+        }
     }
 
     private func loadRestorePoints(for repository: RepositoryID) async {
@@ -846,7 +945,7 @@ public final class AppModel {
             recoveryWarnings = []
         }
         if terminal?.phase == .completed {
-            statusMessage = "Backup completed and verified."
+            statusMessage = terminal?.warnings.isEmpty == false ? "Backup finished with skipped paths." : "Backup completed and verified."
             await loadRestorePoints(for: repository)
         } else if terminal?.phase == .cancelled {
             statusMessage = "Backup cancelled. The previous restore point remains available."
@@ -854,6 +953,7 @@ public final class AppModel {
             statusMessage = "Backup failed. The previous restore point remains available."
         }
         await loadPendingAttempts(for: repository)
+        await refreshDeviceBackupSummary()
         if let id = activeActivityID {
             let verified = terminal?.phase == .completed ? terminal?.progress.completedItems ?? 0 : 0
             activityStore.setVerifiedItems(verified, for: id)

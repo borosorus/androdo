@@ -29,28 +29,30 @@ enum AppIdentity {
     }
 }
 
+struct AppMark: View {
+    var onTile = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let rect = CGRect(origin: .zero, size: proxy.size)
+            Path(AndrodoMarkGeometry.body(in: rect))
+                .fill(onTile ? AnyShapeStyle(.white) : AnyShapeStyle(LinearGradient(
+                    colors: [AppIdentity.blue, AppIdentity.teal], startPoint: .topLeading, endPoint: .bottomTrailing)),
+                      style: FillStyle(eoFill: true))
+            Path(AndrodoMarkGeometry.fold(in: rect))
+                .fill(onTile ? AppIdentity.brandCopper : AppIdentity.copper)
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .accessibilityHidden(true)
+    }
+}
+
 struct AppEmblem: View {
     var body: some View {
         GeometryReader { proxy in
-            let size = proxy.size.width
-            ZStack {
-                RoundedRectangle(cornerRadius: size * 0.24)
-                    .fill(LinearGradient(colors: [AppIdentity.brandBlue, AppIdentity.brandTeal], startPoint: .topLeading, endPoint: .bottomTrailing))
-                RoundedRectangle(cornerRadius: size * 0.07)
-                    .stroke(.white.opacity(0.95), lineWidth: size * 0.045)
-                    .frame(width: size * 0.32, height: size * 0.56)
-                    .offset(x: -size * 0.1, y: -size * 0.02)
-                Capsule().fill(.white.opacity(0.9))
-                    .frame(width: size * 0.12, height: size * 0.025)
-                    .offset(x: -size * 0.1, y: -size * 0.22)
-                RoundedRectangle(cornerRadius: size * 0.045)
-                    .fill(.white)
-                    .frame(width: size * 0.39, height: size * 0.27)
-                    .offset(x: size * 0.13, y: size * 0.20)
-                Capsule().fill(AppIdentity.brandCopper)
-                    .frame(width: size * 0.15, height: size * 0.035)
-                    .offset(x: size * 0.13, y: size * 0.15)
-            }
+            RoundedRectangle(cornerRadius: proxy.size.width * 0.24)
+                .fill(LinearGradient(colors: [AppIdentity.brandBlue, AppIdentity.brandTeal], startPoint: .topLeading, endPoint: .bottomTrailing))
+                .overlay { AppMark(onTile: true).padding(proxy.size.width * 0.13) }
         }
         .aspectRatio(1, contentMode: .fit)
         .accessibilityHidden(true)
@@ -63,25 +65,17 @@ struct DeviceIllustration: View {
 
     var body: some View {
         ZStack {
-            Circle().fill(AppIdentity.teal.opacity(0.08)).frame(width: 166, height: 166)
-            Circle().stroke(AppIdentity.teal.opacity(0.10), lineWidth: 1).frame(width: 196, height: 196)
-            RoundedRectangle(cornerRadius: 23)
+            RoundedRectangle(cornerRadius: 13)
                 .fill(.background)
-                .shadow(color: AppIdentity.blue.opacity(0.12), radius: 12, y: 8)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 23)
-                        .strokeBorder(AppIdentity.blue.opacity(connected ? 0.8 : 0.35), lineWidth: 3)
-                }
-                .frame(width: 99, height: 174)
-            RoundedRectangle(cornerRadius: 16)
-                .fill(LinearGradient(colors: [AppIdentity.blue.opacity(0.15), AppIdentity.teal.opacity(0.25)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                .frame(width: 81, height: 151)
-            Circle().fill(AppIdentity.blue.opacity(0.5)).frame(width: 5, height: 5).offset(y: -69)
-            Image(systemName: connected ? "checkmark" : "cable.connector")
-                .font(.system(size: 28, weight: .light))
-                .foregroundStyle(AppIdentity.teal)
+                .overlay { RoundedRectangle(cornerRadius: 13).strokeBorder(.primary.opacity(0.12)) }
+            RoundedRectangle(cornerRadius: 8)
+                .fill(AppIdentity.blue.opacity(0.10)).padding(6)
+            Capsule().fill(.secondary.opacity(0.6)).frame(width: 14, height: 3).offset(y: -42)
+            Image(systemName: "cable.connector")
+                .font(.system(size: 21, weight: .light))
+                .foregroundStyle(connected ? AppIdentity.teal : Color.secondary)
         }
-        .frame(width: 210, height: 210)
+        .frame(width: 60, height: 104)
         .accessibilityHidden(true)
     }
 }

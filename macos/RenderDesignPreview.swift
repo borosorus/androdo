@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// Compile with PhoneBackupIdentity.swift and DeviceBackupHero.swift.
+// Compile with AndrodoMarkGeometry.swift, PhoneBackupIdentity.swift and DeviceBackupHero.swift.
 // This renderer has no AppModel, transport, repository or phone access.
 @main
 struct RenderDesignPreview {
