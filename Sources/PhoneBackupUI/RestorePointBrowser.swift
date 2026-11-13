@@ -9,6 +9,8 @@ struct RestorePointBrowser: View {
         VStack(spacing: 0) {
             if let point = model.selectedRestorePoint {
                 VStack(alignment: .leading, spacing: 12) {
+                    Label("Saved copy · \(model.selectedRepository?.displayName ?? "Android")", systemImage: "externaldrive")
+                        .font(.caption).foregroundStyle(.secondary)
                     HStack(spacing: 12) {
                         Image(systemName: "archivebox.fill").font(.title2).foregroundStyle(AppIdentity.copper)
                         VStack(alignment: .leading, spacing: 3) {
@@ -19,19 +21,27 @@ struct RestorePointBrowser: View {
                         Spacer(minLength: 0)
                     }
                     HStack {
-                        Button("Restore to Phone…") { showingPhoneRestore = true }
+                        Button("Restore Selected…") { showingPhoneRestore = true }
                             .disabled(model.selectedRestoreRoots.isEmpty || model.isBusy)
-                        Button("Export…") { chooseExportFolder() }
+                        Button("Export Selected…") { chooseExportFolder() }
                             .disabled(model.selectedRestoreRoots.isEmpty || model.isBusy)
                         Spacer(minLength: 0)
                     }
                 }.padding(18)
                 Divider()
-                if model.restoreEntries.isEmpty {
+                if model.isLoadingRestorePoint {
+                    ProgressView("Opening saved files…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let error = model.restorePointError {
+                    ContentUnavailableView {
+                        Label("Saved files unavailable", systemImage: "externaldrive.badge.exclamationmark")
+                    } description: { Text(error) } actions: {
+                        Button("Retry") { Task { await model.selectRestorePoint(point) } }.disabled(model.isBusy)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if model.restoreEntries.isEmpty {
                     ContentUnavailableView("This restore point has no stored entries", systemImage: "doc.questionmark")
                 } else {
                     List {
-                        ForEach(rootEntries) { entry in RestoreEntryRow(entry: entry, allEntries: model.restoreEntries, depth: 0) }
+                        ForEach(rootEntries) { entry in RestoreEntryRow(entry: entry, allEntries: model.restoreEntries) }
                     }.listStyle(.inset)
                 }
                 if point.state == .incomplete || !point.omissions.isEmpty {
@@ -62,14 +72,13 @@ private struct RestoreEntryRow: View {
     @Environment(AppModel.self) private var model
     let entry: BackupEntry
     let allEntries: [BackupEntry]
-    let depth: Int
     @State private var isExpanded = false
 
     var body: some View {
         Group {
             if entry.kind == .directory && !children.isEmpty {
                 DisclosureGroup(isExpanded: $isExpanded) {
-                    ForEach(children) { child in RestoreEntryRow(entry: child, allEntries: allEntries, depth: depth + 1) }
+                    ForEach(children) { child in RestoreEntryRow(entry: child, allEntries: allEntries) }
                 } label: {
                     rowContent
                 }
@@ -77,7 +86,6 @@ private struct RestoreEntryRow: View {
                 rowContent
             }
         }
-        .padding(.leading, CGFloat(depth * 12))
     }
 
     private var rowContent: some View {

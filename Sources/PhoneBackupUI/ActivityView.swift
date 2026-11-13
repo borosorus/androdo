@@ -5,7 +5,7 @@ struct ActivityView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AppPageHeader(title: "This session")
+            AppPageHeader(title: "Recent Operations")
             Divider()
             if model.activityStore.records.isEmpty {
                 ContentUnavailableView("No activity yet", systemImage: "clock.arrow.circlepath", description: Text("Backups, restores, and copies appear here while the app is open."))
@@ -23,6 +23,9 @@ struct ActivityView: View {
                                     .font(.caption.weight(.medium)).padding(.horizontal, 7).padding(.vertical, 3)
                                     .background(color(for: record).opacity(0.12), in: Capsule())
                             }
+                            if record.outcome != .completed, !record.safeSummary.isEmpty {
+                                Text(record.safeSummary).font(.callout).foregroundStyle(.secondary)
+                            }
                             Text("\(record.verifiedItems) verified · \(record.warningCount) warnings")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
@@ -31,13 +34,6 @@ struct ActivityView: View {
                             .font(.caption).foregroundStyle(.tertiary)
                     }.padding(.vertical, 5)
                 }.listStyle(.inset)
-            }
-        }
-        .navigationTitle("Activity")
-        .toolbar {
-            ToolbarItem {
-                Button("Clear Finished") { model.activityStore.clearFinished() }
-                    .disabled(model.activityStore.records.allSatisfy { $0.outcome == .running })
             }
         }
     }
@@ -58,5 +54,27 @@ struct ActivityView: View {
         case .failed: .red
         case .cancelled: .secondary
         }
+    }
+}
+
+
+struct RecentOperationsSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ActivityView()
+            Divider()
+            HStack {
+                Text("This session only").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Clear Finished") { model.activityStore.clearFinished() }
+                    .disabled(model.activityStore.records.allSatisfy { $0.outcome == .running })
+                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+            }.padding(18)
+        }
+        .frame(minWidth: 620, minHeight: 420)
+        .controlSize(.large)
     }
 }

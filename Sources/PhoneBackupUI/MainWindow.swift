@@ -6,6 +6,7 @@ public struct MainWindow: View {
     @Environment(AppModel.self) private var model
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showingADBSetup = false
+    @State private var showingRecentOperations = false
     @State private var showingOmissionConfirmation = false
 
     public init(initialColumnVisibility: NavigationSplitViewVisibility = .all) {
@@ -16,13 +17,14 @@ public struct MainWindow: View {
         @Bindable var model = model
         NavigationSplitView(columnVisibility: $columnVisibility) {
             List(selection: Binding<AppSection?>(get: { model.section }, set: { section in if let section { model.section = section } })) {
-                Section {
+                Section("Backups") {
                     Label { Text("Overview") } icon: { SidebarGlyph(symbol: "rectangle.portrait", color: AppIdentity.blue) }.tag(AppSection.device)
-                    Label { Text("Backups") } icon: { SidebarGlyph(symbol: "externaldrive.fill", color: AppIdentity.copper) }.tag(AppSection.backups)
-                    Label { Text("Files") } icon: { SidebarGlyph(symbol: "folder.fill", color: AppIdentity.blue) }.tag(AppSection.files)
-                    Label { Text("Activity") } icon: { SidebarGlyph(symbol: "clock.arrow.circlepath", color: AppIdentity.teal) }.tag(AppSection.activity)
+                    Label { Text("Saved Backups") } icon: { SidebarGlyph(symbol: "externaldrive.fill", color: AppIdentity.copper) }.tag(AppSection.backups)
                 }
-                Section("Devices") {
+                Section("Phone") {
+                    Label { Text("Phone Files") } icon: { SidebarGlyph(symbol: "folder.fill", color: AppIdentity.blue) }.tag(AppSection.files)
+                }
+                Section {
                     if model.devices.isEmpty {
                         Label(model.hasADB ? "Not connected" : "Connection setup needed", systemImage: "cable.connector.slash")
                             .font(.callout).foregroundStyle(.secondary)
@@ -37,6 +39,14 @@ public struct MainWindow: View {
                         .buttonStyle(.plain)
                         .disabled(model.isBusy)
                         .accessibilityLabel("Select \(device.model ?? "Android device") \(device.id.serial)")
+                    }
+                } header: {
+                    HStack {
+                        Text("Connected devices")
+                        Spacer()
+                        Button { Task { await model.refreshDevices() } } label: { Image(systemName: "arrow.clockwise") }
+                            .buttonStyle(.borderless).disabled(model.isBusy || !model.hasADB)
+                            .help("Refresh connected devices").accessibilityLabel("Refresh connected devices")
                     }
                 }
             }
@@ -60,7 +70,6 @@ public struct MainWindow: View {
                 case .device: DeviceOverview()
                 case .files: PhoneFilesView()
                 case .backups: RestoreLibraryView()
-                case .activity: ActivityView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -85,13 +94,11 @@ public struct MainWindow: View {
         .toolbar(removing: .sidebarToggle)
         .tint(AppIdentity.blue)
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    Task { await model.refreshDevices() }
-                } label: {
-                    Label("Refresh devices", systemImage: "arrow.clockwise")
+            ToolbarItem(placement: .primaryAction) {
+                Button { showingRecentOperations = true } label: {
+                    Label("Recent Operations", systemImage: "clock.arrow.circlepath")
                 }
-                .disabled(model.isBusy || !model.hasADB)
+                .help("Recent operations")
             }
         }
         .sheet(isPresented: $model.isShowingBackupReview) {
@@ -110,6 +117,7 @@ public struct MainWindow: View {
             Text(model.errorMessage ?? "")
         }
         .sheet(isPresented: $showingADBSetup) { ADBSetupView() }
+        .sheet(isPresented: $showingRecentOperations) { RecentOperationsSheet() }
     }
 
     private var showsOperationStatus: Bool {

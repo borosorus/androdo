@@ -60,7 +60,7 @@ public final class ActivityStore {
         guard let index = records.firstIndex(where: { $0.id == id }) else { return }
         records[index].completedItems = event.progress.completedItems
         records[index].warningCount = event.warnings.count
-        records[index].outcome = Self.outcome(for: event.phase)
+        records[index].outcome = event.phase == .completed && !event.warnings.isEmpty ? .incomplete : Self.outcome(for: event.phase)
         if event.phase.isTerminal {
             records[index].finishedAt = Date()
             records[index].safeSummary = Self.summary(for: event.phase, warningCount: event.warnings.count)
@@ -90,7 +90,7 @@ public final class ActivityStore {
 
     private static func summary(for phase: OperationPhase, warningCount: Int) -> String {
         switch phase {
-        case .completed: "Completed and verified."
+        case .completed: warningCount == 0 ? "Completed and verified." : "Finished with \(warningCount) \(warningCount == 1 ? "warning" : "warnings")."
         case .incomplete: "Incomplete; \(warningCount) item(s) need attention."
         case .cancelled: "Cancelled; previous completed data remains available."
         case .failed: "Failed; review the operation and try again."

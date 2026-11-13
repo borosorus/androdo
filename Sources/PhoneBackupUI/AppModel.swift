@@ -6,7 +6,6 @@ public enum AppSection: String, CaseIterable, Hashable, Identifiable {
     case device = "Device"
     case files = "Files"
     case backups = "Backups"
-    case activity = "Activity"
 
     public var id: String { rawValue }
 }
@@ -32,6 +31,8 @@ public final class AppModel {
     public private(set) var deviceBackupSummary: DeviceBackupSummaryState = .noDevice
     public private(set) var selectedRestorePoint: RestorePoint?
     public private(set) var restoreEntries: [BackupEntry] = []
+    public private(set) var isLoadingRestorePoint = false
+    public private(set) var restorePointError: String?
     public private(set) var selectedRestoreRoots: Set<RemotePath> = []
     public private(set) var backupSelection = BackupSelection()
     public private(set) var backupPlan: BackupPlan?
@@ -73,6 +74,7 @@ public final class AppModel {
     @ObservationIgnored private var activeRestoreRequest: RestoreRequest?
     @ObservationIgnored private var contextGeneration = 0
     @ObservationIgnored private var overviewRequest = UUID()
+    @ObservationIgnored private var restorePointRequest = UUID()
     @ObservationIgnored private var loadedRepositoryLocation: URL?
 
     public var isOperationRunning: Bool { operationID != nil }
@@ -161,6 +163,9 @@ public final class AppModel {
         selectedRepositoryID = nil
         restorePoints = []
         selectedRestorePoint = nil
+        restorePointRequest = UUID()
+        isLoadingRestorePoint = false
+        restorePointError = nil
         selectedRestoreRoots = []
         restoreEntries = []
         restorePlan = nil
@@ -175,6 +180,9 @@ public final class AppModel {
             selectedRepositoryID = nil
             restorePoints = []
             selectedRestorePoint = nil
+            restorePointRequest = UUID()
+            isLoadingRestorePoint = false
+            restorePointError = nil
             restoreEntries = []
         }
         Task { await refreshDeviceBackupSummary() }
@@ -573,10 +581,14 @@ public final class AppModel {
         guard !isBusy, repositories.contains(where: { $0.id == id }) else { return }
         contextGeneration += 1
         selectedRepositoryID = id
+        restorePoints = []
         recoveryAttempt = nil
         recoveryWarnings = []
         pendingAttempts = []
         selectedRestorePoint = nil
+        restorePointRequest = UUID()
+        isLoadingRestorePoint = false
+        restorePointError = nil
         selectedRestoreRoots = []
         restoreEntries = []
         restorePlan = nil
@@ -586,26 +598,35 @@ public final class AppModel {
     }
 
     public func selectRestorePoint(_ point: RestorePoint) async {
-        guard !isBusy, let repository = selectedRepositoryID else { return }
+        guard !isBusy, let repository = selectedRepositoryID,
+              restorePoints.contains(where: { $0.id == point.id }) else { return }
         contextGeneration += 1
-        let generation = contextGeneration
+        let request = UUID()
+        restorePointRequest = request
+        selectedRestorePoint = point
+        selectedRestoreRoots = []
+        restoreEntries = []
+        restorePlan = nil
+        isShowingExportReview = false
+        isLoadingRestorePoint = true
+        restorePointError = nil
         do {
-            selectedRestorePoint = point
-            selectedRestoreRoots = []
-            restoreEntries = []
-            restorePlan = nil
-            isShowingExportReview = false
             let entries = try await services.repositoryStore.entries(in: repository, point: point.id, below: nil)
-            guard generation == contextGeneration, selectedRepositoryID == repository,
+            guard restorePointRequest == request, selectedRepositoryID == repository,
                   selectedRestorePoint?.id == point.id else { return }
             restoreEntries = entries
-            errorMessage = nil
+            isLoadingRestorePoint = false
         } catch {
-            errorMessage = UserFacingError.message(for: error)
+            guard restorePointRequest == request, selectedRepositoryID == repository,
+                  selectedRestorePoint?.id == point.id else { return }
+            restoreEntries = []
+            isLoadingRestorePoint = false
+            restorePointError = UserFacingError.message(for: error)
         }
     }
 
     public func toggleRestoreRoot(_ path: RemotePath) {
+        guard !isBusy, !isLoadingRestorePoint, restoreEntries.contains(where: { $0.path == path }) else { return }
         contextGeneration += 1
         if selectedRestoreRoots.contains(path) { selectedRestoreRoots.remove(path) }
         else { selectedRestoreRoots.insert(path) }
@@ -817,6 +838,9 @@ public final class AppModel {
         selectedRepositoryID = nil
         restorePoints = []
         selectedRestorePoint = nil
+        restorePointRequest = UUID()
+        isLoadingRestorePoint = false
+        restorePointError = nil
         selectedRestoreRoots = []
         restoreEntries = []
         pendingAttempts = []
@@ -909,6 +933,7 @@ public final class AppModel {
             restorePoints = points
             errorMessage = nil
         } catch {
+            guard selectedRepositoryID == repository else { return }
             restorePoints = []
             errorMessage = UserFacingError.message(for: error)
         }
@@ -922,6 +947,7 @@ public final class AppModel {
             guard selectedRepositoryID == repository else { return }
             pendingAttempts = attempts
         } catch {
+            guard selectedRepositoryID == repository else { return }
             pendingAttempts = []
             errorMessage = UserFacingError.message(for: error)
         }

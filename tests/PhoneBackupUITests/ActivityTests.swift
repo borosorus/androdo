@@ -23,6 +23,16 @@ final class ActivityTests: XCTestCase {
         XCTAssertFalse(record.safeSummary.contains("private transport details"))
     }
 
+    func testCompletedWithWarningsIsNotPresentedAsPlainSuccess() {
+        let store = ActivityStore()
+        let id = store.begin(.backup)
+        store.update(id, event: OperationEvent(operationID: OperationID(), phase: .completed,
+                                               warnings: [OperationWarning(code: .missingPath, message: "Fixture only")]))
+        XCTAssertEqual(store.records.first?.outcome, .incomplete)
+        XCTAssertEqual(store.records.first?.safeSummary, "Finished with 1 warning.")
+        XCTAssertFalse(store.records.first?.safeSummary.contains("Fixture only") ?? true)
+    }
+
     func testActivityHistoryIsBoundedAndCanClearFinishedRecords() {
         let store = ActivityStore(recordLimit: 2)
         _ = store.begin(.backup)

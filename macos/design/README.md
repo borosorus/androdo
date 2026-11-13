@@ -88,3 +88,16 @@ macOS desktop session are required. The root package does not include this
 executable in the Androdo app bundle. These captures show implemented native
 layout, but do not exercise VoiceOver, keyboard interaction, actual phone access
 or replacement/recovery operations. Fictional counts are for visual layout only.
+
+Phone-trial UX fixtures are also available:
+
+```sh
+macos/design/render-native-preview.sh /private/tmp/androdo-phone-files.png --files --compact
+macos/design/render-native-preview.sh /private/tmp/androdo-phone-scope.png --scope --compact
+macos/design/render-native-preview.sh /private/tmp/androdo-backup-result.png --result --compact
+```
+
+`--result` performs a real engine backup against the fixture's fake transport
+and fake repository, so the result strip is exercised without phone or user
+backup access. `--scope` renders the actual scope editor as an isolated window;
+its normal in-app presentation is a sheet.

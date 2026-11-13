@@ -44,7 +44,7 @@ struct RestoreLibraryView: View {
                 }
             }
         }
-        .navigationTitle("Backups")
+        .navigationTitle("Saved Backups")
         .toolbar {
             ToolbarItem {
                 Button { chooseLocation() } label: { Label("Open Backup Folder…", systemImage: "folder.badge.gearshape") }

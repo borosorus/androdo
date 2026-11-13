@@ -19,7 +19,7 @@ struct DeviceOverview: View {
                     primaryAction
                 }
 
-                if let message = model.statusMessage, model.selectedDevice != nil { MessageBanner(text: message) }
+                if let message = model.statusMessage, model.selectedDevice != nil, model.operationEvent == nil { MessageBanner(text: message) }
 
                 VStack(spacing: 0) {
                     OverviewSettingRow(title: "Back up to", symbol: "externaldrive.fill") {

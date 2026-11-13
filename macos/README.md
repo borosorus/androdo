@@ -75,14 +75,22 @@ latest phone files. Select the phone folders you want, review the size and
 scope, then confirm **Back Up…**. The app verifies copied bytes before it
 marks files complete.
 
-Use **Files** for direct copies. Mac-to-phone drops and button copies show a
+Use **Phone Files** for live browsing and direct copies. Back/Forward can reuse
+visited folder listings; **Refresh** checks the phone again. Cached metadata is
+kept only in memory and is invalidated on connection/transport changes and
+phone-writing operations.
+
+Use **Saved Backups** to browse local restore points independently of the
+connected phone. Snapshot contents are explicitly labeled as a saved copy.
+
+For direct copies, Mac-to-phone drops and button copies show a
 destination review first. Phone-to-Mac copies can be sent to a chosen folder or
 dragged to Finder; a Finder drop begins the transfer and completes after byte
 verification. Restoring a restore point can target its original Android paths,
 a chosen phone folder, or a chosen Mac folder. Each existing destination item
 must be explicitly approved for replacement.
 
-Activity summaries last only for the current app session. They contain counts
+**Recent Operations** (the toolbar clock button) shows summaries for the current app session. They contain counts
 and outcomes, not phone paths, serial numbers, or raw ADB errors. Backup
 recovery attempts are stored in the repository so they remain available after
 reopening the app.
@@ -119,3 +127,10 @@ fixtures; see [the native fixture renderer](design/README.md#capture-the-impleme
 The folded-A glyph and Dock icon share `AndrodoMarkGeometry.swift`. Overview's
 latest-complete-backup summary belongs to the displayed device, independently
 of the repository selected in the backup library.
+
+To choose future backup scope, open **Included files → Choose…**. Highlight rows
+in the phone browser and use **Include Selected** or **Exclude Selected**; the
+right-hand scope list shows what will be saved. **Done** applies that draft and
+**Cancel** discards it. The editor is bound to the phone it was opened for.
+The advanced **All shared files** mode retains custom roots and exclusions when
+switching modes; removing a parent exclusion is always explicit.

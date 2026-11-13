@@ -212,12 +212,28 @@ public actor FakeBackupRepositoryStore: BackupRepositoryWriting {
     private var restoreReadGates: [RepositoryID: [CheckedContinuation<Void, Never>]] = [:]
     private var restoreReadWaiters: [RepositoryID: [CheckedContinuation<Void, Never>]] = [:]
     private var failingRestoreReads: Set<RepositoryID> = []
+    private var pausedEntryReads: Set<RestorePointID> = []
+    private var entryReadGates: [RestorePointID: [CheckedContinuation<Void, Never>]] = [:]
+    private var entryReadWaiters: [RestorePointID: [CheckedContinuation<Void, Never>]] = [:]
+    private var failingEntryReads: Set<RestorePointID> = []
 
     public init() {}
 
     public func delayStagingForTesting(_ duration: Duration?) {
         stagingDelayForTesting = duration
     }
+
+    public func pauseEntryReadsForTesting(point: RestorePointID) { pausedEntryReads.insert(point) }
+    public func waitForPausedEntryRead(point: RestorePointID) async {
+        if !(entryReadGates[point] ?? []).isEmpty { return }
+        await withCheckedContinuation { entryReadWaiters[point, default: []].append($0) }
+    }
+    public func resumeEntryReadsForTesting(point: RestorePointID, failing: Bool = false) {
+        pausedEntryReads.remove(point)
+        if failing { failingEntryReads.insert(point) }
+        (entryReadGates.removeValue(forKey: point) ?? []).forEach { $0.resume() }
+    }
+    public func failNextEntryReadForTesting(point: RestorePointID) { failingEntryReads.insert(point) }
 
     public func failNextRepositoryOpenForTesting() { failNextOpenForTesting = true }
 
@@ -429,6 +445,13 @@ public actor FakeBackupRepositoryStore: BackupRepositoryWriting {
         guard let value = stored[repository], let entries = value.2[point] else {
             throw EngineError.corruptedRepository("Unknown restore point")
         }
+        if pausedEntryReads.contains(point) {
+            await withCheckedContinuation { continuation in
+                entryReadGates[point, default: []].append(continuation)
+                (entryReadWaiters.removeValue(forKey: point) ?? []).forEach { $0.resume() }
+            }
+        }
+        if failingEntryReads.remove(point) != nil { throw EngineError.corruptedRepository("Fixture saved-file read failed") }
         guard let path else { return entries.sorted { $0.path.description < $1.path.description } }
         return entries
             .filter { $0.path.parent == path }

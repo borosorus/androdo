@@ -60,3 +60,18 @@ and Mac dependent; do not claim them tested until observed.
 - [ ] Guide links to Google's Platform Tools/USB-debugging documentation and can copy the Homebrew command.
 - [ ] After installing outside the app, Check Again discovers ADB; a custom location works through Locate ADB.
 - [ ] Discovery failure remains visible inside the guide, even without the main window.
+
+## Phone-trial UX regression checks
+
+- [ ] A successful backup shows **Backup complete**, never a generic attention heading.
+- [ ] Warnings/failures expose a reason and bounded details; interrupted backups explain saved progress and Resume.
+- [ ] Phone Files opens folders from a full-row double-click or Return; rapid navigation, Back/Forward, Refresh and Cancel preserve the displayed path/rows.
+- [ ] Copy/drop cannot target stale rows while a folder is loading; folder failures remain visible after leaving/returning.
+- [ ] Backup scope uses Include/Exclude with a visible scope list; Cancel discards and Done applies for the original phone only.
+- [ ] Changing/disconnecting phones while the scope sheet is open cannot apply its draft to another phone.
+- [ ] Saved Backups is clearly a saved copy; saved-file loading failures differ from an empty snapshot.
+- [ ] Recent Operations is secondary in the toolbar, with session-only summaries and clear-finished behavior.
+
+Automated fixture checks cover the state transitions, but actual USB latency,
+Finder drops/promises and interactive keyboard/VoiceOver behavior still require
+manual acceptance. Keep phone checks inside the user-selected test area.

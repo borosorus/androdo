@@ -32,6 +32,10 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 8.3 — Rename the app Androdo, integrate toolbar branding, enlarge native controls, and add guided ADB setup. Commit: `feat(macOS): introduce Androdo and guided ADB setup`. Review: approved after preserving open browser state during ADB rechecks and correcting clone instructions.
 - [x] Step 8.4 — Compare full-window identity/layout studies and select the folded-A direction. Commit: `design(macOS): compare Androdo identity and window layouts`. Review: approved; user selected A.
 - [x] Step 8.5 — Implement the folded-A identity, stable native titlebar, and device-bound backup overview. Commit: `feat(ui): adopt folded-A identity and backup overview`. Review: approved after preserving repository-discovery failures and saved-repository recovery during Retry.
+- [x] Step 8.6 — Show accurate operation outcomes and details. Commit: `fix(ui): show accurate operation outcomes and details`. Review: approved.
+- [x] Step 8.7 — Coordinate live folder navigation and selection. Commit: `fix(files): coordinate live folder navigation and selection`. Review: approved after cache/cancellation/error fixes.
+- [x] Step 8.8 — Simplify current-phone backup scope selection. Commit: `feat(backups): simplify phone backup scope selection`. Review: approved after immutable phone/session capture.
+- [x] Step 8.9 — Separate saved backups from live phone files and make Recent Operations secondary. Commit: `refactor(ui): distinguish saved backups from live phone files`. Review: approved.
 - [ ] Step 9 — Complete packaging, CI, and end-to-end acceptance. Local packaging and CI committed as `build(macOS): package app and add acceptance checks`; reviewer approved. Phone acceptance remains pending an explicitly selected disposable folder.
 
 ## Steps
@@ -227,7 +231,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 **8.8 complete:** Replaced the current-phone scope checkbox tree with a native browser/table, explicit Include/Exclude actions and an included/excluded scope tray. Mode changes preserve custom roots/exclusions. Draft edits stay local until Done; an immutable presentation session plus retained original device prevent retargeting a draft after phone changes. Added guarded application and tests for scope semantics, persistence, stale phone rejection and shallow browsing. Swift tests passed (69 core + 43 UI-model); native fictional compact picker capture inspected; reviewer approved after fixing presentation identity.
 
-**8.9:** In progress. The transport already issues one shallow find command per listing and supports process cancellation; fixes belong primarily in request coordination and interaction/state handling.
+**8.9 complete:** Grouped Saved Backups separately from Phone Files, added saved/live provenance, moved Activity into a Recent Operations toolbar sheet, retained safe warning summaries, and distinguished loading/error/empty saved-file states with request-scoped stale success/error guards. Removed duplicate tree indentation and redundant Overview completion banners. Swift tests passed (69 core + 46 UI-model); reviewer approved. Native fictional compact Phone Files, Saved Backups, completed backup and light/dark scope-picker captures inspected. Final app bundle built and ad-hoc signature verified. Actual device latency, Finder interaction and keyboard/VoiceOver remain manual acceptance; no real phone folders or user backups were accessed for this work. The transport already issues one shallow find command per listing and supports process cancellation; fixes belong primarily in request coordination and interaction/state handling.
 
 ### Step 9 — Packaging and end-to-end acceptance
 
