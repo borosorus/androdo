@@ -16,7 +16,7 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteFileAccess {
     public func seed(_ entry: RemoteEntry, on device: DeviceID, data: Data? = nil) {
         entries[device, default: []].removeAll { $0.path == entry.path }
         entries[device, default: []].append(entry)
-        entries[device, default: []].sort { $0.path.description < $1.path.description }
+        entries[device, default: []].sort { RemotePath.bytewiseLess($0.path, $1.path) }
         if let data { fileData[device, default: [:]][entry.path] = data }
     }
 

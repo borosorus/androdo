@@ -20,7 +20,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 - [x] Step 0 — Create the feature branch and establish the Swift project shell. Commit: `chore(macOS): scaffold Swift app and engine`. Review: approved, no code blockers; follow-up notes addressed.
 - [x] Step 1 — Define Swift engine models, protocols, and fake transport. Commit: `feat(engine): define backup and device contracts`. Review: approved; byte-exact path identity, explicit shared-storage scope, and safe conflict recovery covered.
-- [ ] Step 2 — Implement ADB discovery, path-safe transport, and lazy browsing.
+- [x] Step 2 — Implement ADB discovery, path-safe transport, and lazy browsing. Commit: `feat(adb): add device transport and lazy browsing`. Review: approved after fixes for ADB shell argument quoting, `/sdcard` symlink traversal, process-output draining, and structured disconnect errors.
 - [ ] Step 3 — Implement the local backup repository and immutable restore points.
 - [ ] Step 4 — Implement selective backup planning, execution, progress, and recovery.
 - [ ] Step 5 — Implement verification and safe local/phone restore.
@@ -62,6 +62,8 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 **Checks:** Fake ADB tests for no device, unauthorized/offline devices, multiple devices, disconnection, paths with spaces/newlines, denied subtrees, and cancellation. A real-device smoke test lists only a user-opened folder.
 
 **Review:** Confirm no recursive listing occurs on device discovery and no command string is built by interpolating user paths. Preserve valid UTF-8 names exactly; if a filename cannot be represented safely by the Swift/ADB transport, report it as an omission and prevent a complete restore point until the user explicitly finishes with that omission.
+
+**Complete:** Implemented discovery, SDK/Homebrew/PATH resolution, serial-bound pull/push, safely quoted immediate-child listings, structured device/path errors, and bounded cancellable process execution. `swift test` passes (19 tests); `git diff --check` passes. No phone folders were read; the real-device smoke test remains for a user-selected path.
 
 ### Step 3 — Repository and immutable restore points
 

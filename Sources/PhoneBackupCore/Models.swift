@@ -29,6 +29,7 @@ public enum DeviceState: Codable, Equatable, Sendable {
     case offline
     case bootloader
     case recovery
+    case sideload
     case unknown(String)
 }
 
@@ -334,6 +335,7 @@ public struct OperationWarning: Codable, Equatable, Sendable, Identifiable {
 
 public enum RecoveryAction: String, Codable, Sendable {
     case retry
+    case locateADB
     case reconnectDevice
     case chooseAccessiblePaths
     case chooseDestination
@@ -343,8 +345,13 @@ public enum RecoveryAction: String, Codable, Sendable {
 public enum EngineError: Error, Codable, Equatable, Sendable {
     case invalidIdentifier
     case invalidRemotePath(String)
+    case adbUnavailable(String)
+    case operationTimedOut
     case deviceUnavailable(DeviceID)
+    case missingPath(RemotePath)
     case inaccessiblePath(RemotePath)
+    case notDirectory(RemotePath)
+    case unsupportedDirectoryListing(DeviceID)
     case destinationConflict(TransferConflict)
     case unsupportedFilename(RemotePath)
     case sourceChanged(RemotePath)
@@ -355,7 +362,11 @@ public enum EngineError: Error, Codable, Equatable, Sendable {
     public var recoveryActions: [RecoveryAction] {
         switch self {
         case .deviceUnavailable: [.reconnectDevice, .retry]
-        case .inaccessiblePath, .unsupportedFilename: [.chooseAccessiblePaths]
+        case .inaccessiblePath, .unsupportedFilename, .unsupportedDirectoryListing: [.chooseAccessiblePaths]
+        case .missingPath: [.chooseAccessiblePaths]
+        case .notDirectory: [.chooseAccessiblePaths]
+        case .adbUnavailable: [.locateADB]
+        case .operationTimedOut: [.retry]
         case .destinationConflict(let conflict):
             conflict.kind == .fileExists ? [.allowReplacement] : [.chooseDestination]
         case .sourceChanged: [.retry]
