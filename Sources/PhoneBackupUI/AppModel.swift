@@ -996,6 +996,9 @@ public final class AppModel {
                 _ = await self.replanRestoreWithExplicitMissingTarget(request, path: path)
                 self.restoreResult = nil
             }
+            if let request = self.activeRestoreRequest, self.isPhoneRestoreTarget(request.target) {
+                self.fileBrowser.invalidateVisitedFolders()
+            }
             self.activeRestoreRequest = nil
             if self.operationID == operation { self.operationID = nil; self.operationTitle = nil; self.activeOperationKind = nil }
             self.activeActivityID = nil
@@ -1030,6 +1033,9 @@ public final class AppModel {
                let request = self.activeCopyRequest {
                 presentedReplacementReview = await self.replanCopyWithExplicitMissingTarget(request, path: path, engine: engine)
                 if presentedReplacementReview { self.copyResult = nil }
+            }
+            if let request = self.activeCopyRequest, case .macToPhone = request {
+                self.fileBrowser.invalidateVisitedFolders()
             }
             self.activeCopyRequest = nil
             if self.operationID == operation { self.operationID = nil; self.operationTitle = nil; self.activeOperationKind = nil }

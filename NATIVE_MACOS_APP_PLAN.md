@@ -223,7 +223,9 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 **8.6 complete:** Retained backup/restore/export/copy presentation identity, derived truthful terminal headings, exposed warning details for every operation and explained interrupted recovery. Clearing an alert preserves a running operation; dismissing a terminal result preserves independent backup history/recovery. Swift tests passed (69 core + 29 UI-model). Reviewer approved after export identity and dismissal coverage were added.
 
-**8.7–8.9:** In progress. The transport already issues one shallow find command per listing and supports process cancellation; fixes belong primarily in request coordination and interaction/state handling.
+**8.7 complete:** Added owned/deduplicated/cancellable listings, pending-path loading, native table opening, visited-only bounded metadata cache, back/forward history, explicit refresh and write invalidation, selection intersection, and copy/drop guards while loading. Fixed review findings for suspended rows after cached navigation, error dismissal on leaving Files, and oversized cache replacement. Swift tests passed (69 core + 38 UI-model); reviewer approved. Actual device latency remains unmeasured.
+
+**8.8–8.9:** In progress. The transport already issues one shallow find command per listing and supports process cancellation; fixes belong primarily in request coordination and interaction/state handling.
 
 ### Step 9 — Packaging and end-to-end acceptance
 
