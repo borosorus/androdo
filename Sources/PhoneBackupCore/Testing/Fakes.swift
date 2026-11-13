@@ -223,12 +223,19 @@ public actor FakeBackupRepositoryStore: BackupRepositoryWriting {
     }
 
     public func openRepositories(in location: URL) async throws -> [BackupRepositoryInfo] {
-        stored.values.map(\.0).filter { $0.location.deletingLastPathComponent() == location.standardizedFileURL }
+        let root = location.standardizedFileURL
+        return stored.values.map(\.0).filter {
+            $0.location.deletingLastPathComponent().deletingLastPathComponent() == root
+        }
     }
 
     public func openOrCreateRepository(in location: URL, for device: AndroidDevice) async throws -> BackupRepositoryInfo {
-        if let existing = stored.values.map(\.0).first(where: { $0.deviceID == device.id }) { return existing }
-        let repository = BackupRepositoryInfo(location: location.standardizedFileURL, deviceID: device.id,
+        let root = location.standardizedFileURL
+        if let existing = stored.values.map(\.0).first(where: {
+            $0.deviceID == device.id && $0.location.deletingLastPathComponent().deletingLastPathComponent() == root
+        }) { return existing }
+        let repositoryPath = root.appendingPathComponent("PhoneBackup/device-\(device.id.serial)", isDirectory: true)
+        let repository = BackupRepositoryInfo(location: repositoryPath, deviceID: device.id,
                                               displayName: device.model ?? device.id.serial)
         seed(repository: repository)
         return repository

@@ -56,6 +56,7 @@ public protocol BackupEngine: OperationCoordinator {
     func resumeBackup(_ attempt: BackupAttemptID, omissions: BackupOmissionChoice) async throws -> OperationID
     func finishWithOmissions(_ attempt: BackupAttemptID) async throws -> OperationID
     func attempts(in repository: RepositoryID) async throws -> [BackupAttempt]
+    func attemptID(for operation: OperationID) async -> BackupAttemptID?
 }
 
 public protocol RestoreEngine: OperationCoordinator {

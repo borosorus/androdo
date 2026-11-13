@@ -45,6 +45,7 @@ public actor DefaultBackupEngine: BackupEngine {
     private var plannedRequests: [BackupPlanID: Request] = [:]
     private var operationRecords: [OperationID: OperationRecord] = [:]
     private var operationTasks: [OperationID: Task<Void, Never>] = [:]
+    private var attemptsByOperation: [OperationID: BackupAttemptID] = [:]
     private var activeRepositories: Set<RepositoryID> = []
 
     public init(
@@ -97,6 +98,10 @@ public actor DefaultBackupEngine: BackupEngine {
         try await repositoryStore.backupAttempts(in: repository)
     }
 
+    public func attemptID(for operation: OperationID) async -> BackupAttemptID? {
+        attemptsByOperation[operation]
+    }
+
     public func events(for operation: OperationID) async -> AsyncStream<OperationEvent> {
         let (stream, continuation) = AsyncStream<OperationEvent>.makeStream(bufferingPolicy: .bufferingNewest(128))
         guard var record = operationRecords[operation] else {
@@ -136,6 +141,7 @@ public actor DefaultBackupEngine: BackupEngine {
                 attempt = try await repositoryStore.beginBackupAttempt(in: request.repository, device: request.device, selection: request.selection)
             }
             let operation = OperationID()
+            attemptsByOperation[operation] = attempt.id
             operationRecords[operation] = OperationRecord(latestEvent: OperationEvent(operationID: operation, phase: .scanning))
             let task = Task { [weak self] in
                 guard let self else { return }

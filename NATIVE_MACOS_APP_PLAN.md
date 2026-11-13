@@ -25,7 +25,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 4 — Implement selective backup planning, execution, progress, and recovery. Commit: `feat(backup): add scoped snapshot operations`. Review: approved after fixes; see completion notes below.
 - [x] Step 5 — Implement verification and safe local/phone restore. Commit: `feat(restore): add verified batch restore`. Review: approved after fixes for source-base validation, descriptor cleanup, and failure-path coverage.
 - [x] Step 6 — Implement direct file copy in both directions. Commit: `feat(transfer): add direct file copy`. Review: approved after fixes for destination parents, source ancestors, directory revalidation, cancellation, error reporting, repository containment, descriptor-relative traversal, and plan mapping consistency.
-- [ ] Step 7 — Build the backup-first SwiftUI experience and offline restore browser.
+- [x] Step 7 — Build the backup-first SwiftUI experience and offline restore browser. Commit: `feat(ui): add backup and local restore flows`. Review: approved, no blockers; follow-up findings addressed.
 - [ ] Step 8 — Build the phone file browser, Activity, and accessibility polish.
 - [ ] Step 9 — Complete packaging, CI, and end-to-end acceptance.
 
@@ -119,9 +119,11 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 **Commit:** `feat(ui): add backup and local restore flows`
 
-**Checks:** SwiftUI tests for onboarding, empty/disconnected states, first backup, incremental backup, inaccessible paths, cancellation/retry, and offline browsing; VoiceOver labels and keyboard navigation checks.
+**Checks:** `swift build` succeeds as part of `swift test`; full suite passes (67 core tests and 4 UI-model tests). UI-model coverage checks per-device selection preferences, shared-path export mapping including one-file selection, and that device discovery does not list phone folders. `git diff --check` passes. On-device backup/restore and VoiceOver/keyboard navigation have not been exercised; real-device acceptance remains in Step 9.
 
-**Review:** Confirm native macOS patterns, clear status language, no misleading progress, and no phone scan until a user opens or selects a path.
+**Review:** Approved with no remaining blockers. Review fixes covered single-file export mapping, persistent interrupted-attempt recovery, stale restore context, omission warnings, and serialized operation startup. Device discovery remains shallow; remote folder listing starts only after the user opens the selection sheet.
+
+**Complete:** Added a SwiftUI device sidebar, destination chooser with a saved security-scoped bookmark, explicit shared-storage or folder selection with lazy listing, backup plan review, progress/cancellation, retry or confirmed omission handling, and an offline restore library with selected-file/folder export and explicit conflict replacement. Recovery attempts are reloaded from repositories after reopening. The app has not yet been visually inspected with VoiceOver or validated against a connected phone; those checks are deferred to Step 9.
 
 ### Step 8 — Phone browser, device restore, Activity, and polish
 

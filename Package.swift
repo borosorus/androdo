@@ -7,11 +7,15 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "PhoneBackupCore", targets: ["PhoneBackupCore"]),
+        .library(name: "PhoneBackupUI", targets: ["PhoneBackupUI"]),
         .executable(name: "PhoneBackupApp", targets: ["PhoneBackupApp"]),
     ],
     targets: [
         .target(name: "PhoneBackupCore"),
-        .executableTarget(name: "PhoneBackupApp", dependencies: ["PhoneBackupCore"]),
+        .target(name: "PhoneBackupUI", dependencies: ["PhoneBackupCore"]),
+        .executableTarget(name: "PhoneBackupApp", dependencies: ["PhoneBackupCore", "PhoneBackupUI"]),
+        .testTarget(name: "PhoneBackupUITests", dependencies: ["PhoneBackupCore", "PhoneBackupUI"],
+                    path: "tests/PhoneBackupUITests"),
         .testTarget(
             name: "PhoneBackupCoreTests",
             dependencies: ["PhoneBackupCore"],
