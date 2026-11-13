@@ -62,6 +62,14 @@ It runs in CI against Python 3.8 through 3.13 on Linux, and 3.12 on macOS.
 
 ## Installation
 
+### Native macOS app
+
+A separate SwiftUI macOS app is under active development for selective Android
+backups, verified restore, and direct file copy. It uses the Swift engine and
+does not browse phone folders until you open one in the app. See
+the [native macOS app guide](macos/README.md) for build and setup instructions;
+the Python CLI sections below remain separate.
+
 From source:
 
 ```

@@ -50,6 +50,7 @@ public final class AppModel {
     public private(set) var isPlanningCopy = false
     public private(set) var isStartingOperation = false
     public private(set) var isLoadingFolder = false
+    public private(set) var isRefreshingDevices = false
     public var isShowingBackupReview = false
     public var isShowingExportReview = false
     public var isShowingCopyReview = false
@@ -70,7 +71,7 @@ public final class AppModel {
     @ObservationIgnored private var contextGeneration = 0
 
     public var isOperationRunning: Bool { operationID != nil }
-    public var isBusy: Bool { isPlanningBackup || isPlanningExport || isPlanningCopy || isStartingOperation || isOperationRunning }
+    public var isBusy: Bool { isPlanningBackup || isPlanningExport || isPlanningCopy || isStartingOperation || isOperationRunning || isRefreshingDevices }
     public var hasADB: Bool { services.deviceTransport != nil }
     public var selectedRepository: BackupRepositoryInfo? {
         repositories.first(where: { $0.id == selectedRepositoryID })
@@ -88,6 +89,9 @@ public final class AppModel {
         self.locationAccess = locationAccess
         self.fileBrowser = RemoteBrowserModel(remote: services.remoteAccess)
         self.activityStore = activityStore
+        if let executable = services.adbExecutable {
+            preferences.adbExecutablePath = executable.path
+        }
         if loadOnStart {
             Task {
                 await loadSavedDestination()
@@ -97,6 +101,9 @@ public final class AppModel {
     }
 
     public func refreshDevices() async {
+        guard !isRefreshingDevices else { return }
+        isRefreshingDevices = true
+        defer { isRefreshingDevices = false }
         guard let transport = services.deviceTransport else {
             devices = []
             selectedDevice = nil
@@ -214,6 +221,10 @@ public final class AppModel {
 
     public func locateADB(at url: URL) {
         guard !isBusy else { return }
+        guard ADBExecutableResolver.isExecutableFile(at: url) else {
+            errorMessage = "Choose an executable ADB file, then try again."
+            return
+        }
         preferences.adbExecutablePath = url.standardizedFileURL.path
         services = services.usingADB(at: url)
         fileBrowser.updateRemote(services.remoteAccess)

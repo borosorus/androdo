@@ -223,6 +223,30 @@ final class ADBTransportTests: XCTestCase {
         XCTAssertEqual(resolved, executable.standardizedFileURL)
     }
 
+    func testResolverFallsBackWhenSavedADBNoLongerExists() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let executable = root.appendingPathComponent("platform-tools/adb")
+        try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let resolved = ADBExecutableResolver.resolve(
+            preferredExecutable: root.appendingPathComponent("removed-adb"),
+            environment: ["ANDROID_HOME": root.path, "ANDROID_SDK_ROOT": root.path, "PATH": ""]
+        )
+
+        XCTAssertEqual(resolved, executable.standardizedFileURL)
+    }
+
+    func testResolverDoesNotAcceptADirectoryAsADBExecutable() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        XCTAssertFalse(ADBExecutableResolver.isExecutableFile(at: root))
+    }
+
     func testUnsupportedFindFormatIsRememberedPerDevice() async throws {
         let path = try RemotePath("/sdcard")
         let runner = StubCommandRunner(outputs: [CommandOutput(data: Data("find: unknown option -printf".utf8), exitCode: 1)])

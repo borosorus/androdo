@@ -81,9 +81,8 @@ public struct MainWindow: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                if !model.hasADB {
-                    Button("Locate ADB…") { showingADBPanel = true }
-                }
+                Button(model.hasADB ? "Change ADB…" : "Locate ADB…") { showingADBPanel = true }
+                    .disabled(model.isBusy)
                 Button {
                     Task { await model.refreshDevices() }
                 } label: {

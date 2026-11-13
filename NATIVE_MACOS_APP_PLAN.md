@@ -27,7 +27,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 6 — Implement direct file copy in both directions. Commit: `feat(transfer): add direct file copy`. Review: approved after fixes for destination parents, source ancestors, directory revalidation, cancellation, error reporting, repository containment, descriptor-relative traversal, and plan mapping consistency.
 - [x] Step 7 — Build the backup-first SwiftUI experience and offline restore browser. Commit: `feat(ui): add backup and local restore flows`. Review: approved, no blockers; follow-up findings addressed.
 - [x] Step 8 — Build the phone file browser, Activity, and accessibility polish. Commit: `feat(ui): add phone browser and operation activity`. Review: approved after fixes for device-bound restore browsing, Finder promise device binding, asynchronous safe-no-overwrite recovery, empty-folder drops, verified Activity counts, and preventing review dismissal during operation startup.
-- [ ] Step 9 — Complete packaging, CI, and end-to-end acceptance.
+- [ ] Step 9 — Complete packaging, CI, and end-to-end acceptance. Local packaging and CI committed as `build(macOS): package app and add acceptance checks`; reviewer approved. Phone acceptance remains pending an explicitly selected disposable folder.
 
 ## Steps
 
@@ -146,6 +146,8 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 **Checks:** Clean build from documented steps; all Swift and existing Python tests; app startup without a phone; real-device acceptance using only an explicitly selected disposable folder and hash-checked copy/restore round trips.
 
 **Review:** Confirm generated app artifacts and `PhoneBackupTrial/` are excluded, build prerequisites are clear, and completion claims distinguish shared-file backup from full-device backup.
+
+**Local implementation complete; Step 9 remains open:** Added an Apple Silicon `.app` builder with `Info.plist`, `PkgInfo`, and ad-hoc signature verification; always-available ADB recovery with executable-path validation and serialized refresh; a separate macOS Swift CI workflow; native app setup and acceptance guides; and an ignore rule protecting `PhoneBackupTrial/`. `swift test` passed (69 core and 11 UI-model tests), Python tests passed (128), the app bundle built and verified, `open dist/PhoneBackup.app` returned successfully, and `git diff --check` passed. Reviewer approved with no blockers. No phone folders were browsed or changed. The app window was not visually inspected, and the hash-checked phone backup/copy/restore acceptance still requires your explicit disposable-folder selection; do not mark this step complete until those checks are observed.
 
 ## Platform and product constraints
 

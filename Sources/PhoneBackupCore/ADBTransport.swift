@@ -30,6 +30,22 @@ public struct ADBConfiguration: Sendable {
 }
 
 public enum ADBExecutableResolver {
+    public static func isExecutableFile(at url: URL, fileManager: FileManager = .default) -> Bool {
+        var isDirectory: ObjCBool = false
+        return fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            && !isDirectory.boolValue
+            && fileManager.isExecutableFile(atPath: url.path)
+    }
+
+    public static func resolve(preferredExecutable: URL?,
+                               environment: [String: String] = ProcessInfo.processInfo.environment,
+                               fileManager: FileManager = .default) -> URL? {
+        if let preferredExecutable, isExecutableFile(at: preferredExecutable, fileManager: fileManager) {
+            return preferredExecutable.standardizedFileURL
+        }
+        return resolve(environment: environment, fileManager: fileManager)
+    }
+
     public static func resolve(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default
@@ -41,7 +57,7 @@ public enum ADBExecutableResolver {
             + ["/opt/homebrew/bin/adb", "/usr/local/bin/adb", "/usr/bin/adb"]
         let pathEntries = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
         for path in commonPaths + pathEntries.map({ URL(fileURLWithPath: $0).appendingPathComponent("adb").path }) {
-            if fileManager.isExecutableFile(atPath: path) {
+            if isExecutableFile(at: URL(fileURLWithPath: path), fileManager: fileManager) {
                 return URL(fileURLWithPath: path).standardizedFileURL
             }
         }

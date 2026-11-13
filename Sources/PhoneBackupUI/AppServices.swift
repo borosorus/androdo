@@ -32,7 +32,7 @@ public struct AppServices {
     public static func live(adbExecutable explicitADB: URL? = nil,
                             repositoryStore: (any BackupRepositoryWriting)? = nil) -> AppServices {
         let store = repositoryStore ?? LocalBackupRepositoryStore()
-        let adbURL = explicitADB ?? ADBExecutableResolver.resolve()
+        let adbURL = ADBExecutableResolver.resolve(preferredExecutable: explicitADB)
         guard let adbURL,
               let configuration = try? ADBConfiguration(executable: adbURL) else {
             return AppServices(repositoryStore: store)
