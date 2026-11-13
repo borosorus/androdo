@@ -19,7 +19,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 ## Progress
 
 - [x] Step 0 — Create the feature branch and establish the Swift project shell. Commit: `chore(macOS): scaffold Swift app and engine`. Review: approved, no code blockers; follow-up notes addressed.
-- [ ] Step 1 — Define Swift engine models, protocols, and fake transport.
+- [x] Step 1 — Define Swift engine models, protocols, and fake transport. Commit: `feat(engine): define backup and device contracts`. Review: approved; byte-exact path identity, explicit shared-storage scope, and safe conflict recovery covered.
 - [ ] Step 2 — Implement ADB discovery, path-safe transport, and lazy browsing.
 - [ ] Step 3 — Implement the local backup repository and immutable restore points.
 - [ ] Step 4 — Implement selective backup planning, execution, progress, and recovery.
