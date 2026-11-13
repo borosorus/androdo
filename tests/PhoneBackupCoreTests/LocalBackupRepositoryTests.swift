@@ -106,6 +106,10 @@ final class LocalBackupRepositoryTests: XCTestCase {
         let bytes = Data("checkpoint bytes".utf8)
         let reference = try await store.importFile(from: try write(bytes, under: root),
                                                    expectedSize: Int64(bytes.count), into: repository.id)
+        let staged = try await store.stageObject(reference, in: repository.id)
+        XCTAssertEqual(try Data(contentsOf: staged), bytes)
+        await store.discardStagedObject(at: staged, in: repository.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path))
         let path = try RemotePath("/sdcard/Pictures/photo.jpg")
         try await store.saveCheckpoint(
             BackupCheckpoint(path: path, size: reference.size, modifiedAt: Date(timeIntervalSince1970: 10),

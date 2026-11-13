@@ -23,6 +23,8 @@ public protocol BackupRepositoryWriting: BackupRepositoryStore {
     func closeRepository(_ repository: RepositoryID) async throws
     func importFile(from localURL: URL, expectedSize: Int64, into repository: RepositoryID) async throws -> ContentObjectReference
     func verifyObject(_ reference: ContentObjectReference, in repository: RepositoryID) async throws
+    func stageObject(_ reference: ContentObjectReference, in repository: RepositoryID) async throws -> URL
+    func discardStagedObject(at url: URL, in repository: RepositoryID) async
     func backupAttempts(in repository: RepositoryID) async throws -> [BackupAttempt]
     func beginBackupAttempt(in repository: RepositoryID, device: DeviceID, selection: BackupSelection) async throws -> BackupAttempt
     func backupAttempt(_ attempt: BackupAttemptID, in repository: RepositoryID) async throws -> BackupAttempt
@@ -36,6 +38,13 @@ public protocol BackupRepositoryWriting: BackupRepositoryStore {
     func verify(repository: RepositoryID, point: RestorePointID?) async throws -> RepositoryIntegrityReport
 }
 
+public protocol RemoteDestinationAccess: RemoteFileAccess {
+    func inspectDestination(_ path: RemotePath, on device: DeviceID) async throws -> RemoteDestinationState
+    func createDestinationDirectory(_ path: RemotePath, on device: DeviceID) async throws
+    func publishStagedFile(from localURL: URL, to path: RemotePath, on device: DeviceID,
+                           expected: ContentObjectReference, replacing identity: String?) async throws
+}
+
 public protocol OperationCoordinator: Sendable {
     func events(for operation: OperationID) async -> AsyncStream<OperationEvent>
     func cancel(_ operation: OperationID) async
@@ -47,4 +56,10 @@ public protocol BackupEngine: OperationCoordinator {
     func resumeBackup(_ attempt: BackupAttemptID, omissions: BackupOmissionChoice) async throws -> OperationID
     func finishWithOmissions(_ attempt: BackupAttemptID) async throws -> OperationID
     func attempts(in repository: RepositoryID) async throws -> [BackupAttempt]
+}
+
+public protocol RestoreEngine: OperationCoordinator {
+    func planRestore(_ request: RestoreRequest) async throws -> RestorePlan
+    func startRestore(_ plan: RestorePlanID, replacing conflicts: Set<UUID>) async throws -> OperationID
+    func result(for operation: OperationID) async -> RestoreBatchResult?
 }

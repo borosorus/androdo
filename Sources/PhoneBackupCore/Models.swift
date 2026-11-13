@@ -412,6 +412,142 @@ public struct BackupEntry: Codable, Equatable, Sendable, Identifiable {
     public var id: RemotePath { path }
 }
 
+public enum RestoreTarget: Equatable, Sendable {
+    case localFolder(URL, sourceBase: RemotePath)
+    case originalPhonePaths
+    case phoneFolder(RemotePath, sourceBase: RemotePath)
+}
+
+public enum RestoreDestination: Hashable, Sendable {
+    case local(URL)
+    case phone(RemotePath)
+}
+
+public struct RestoreRequest: Sendable {
+    public let repository: RepositoryID
+    public let point: RestorePointID
+    public let selectedRoots: [RemotePath]
+    public let target: RestoreTarget
+    /// Exact remote file paths that a newly reviewed plan may publish with explicit replacement semantics.
+    public let replaceMissingPhoneTargets: Set<RemotePath>
+
+    public init(repository: RepositoryID, point: RestorePointID, selectedRoots: [RemotePath], target: RestoreTarget,
+                replaceMissingPhoneTargets: Set<RemotePath> = []) {
+        self.repository = repository
+        self.point = point
+        self.selectedRoots = Array(Set(selectedRoots)).sorted(by: RemotePath.bytewiseLess)
+        self.target = target
+        self.replaceMissingPhoneTargets = replaceMissingPhoneTargets
+    }
+}
+
+public struct RestoreMapping: Equatable, Sendable, Identifiable {
+    public let source: BackupEntry
+    public let destination: RestoreDestination
+    public var id: RemotePath { source.path }
+
+    public init(source: BackupEntry, destination: RestoreDestination) {
+        self.source = source
+        self.destination = destination
+    }
+}
+
+public enum RestoreConflictKind: String, Equatable, Sendable {
+    case fileExists
+    case directoryExists
+    case unsafePath
+    case caseOrUnicodeAlias
+}
+
+public enum RemoteDestinationState: Equatable, Sendable {
+    case missing
+    case regularFile(identity: String, size: Int64)
+    case directory(identity: String)
+    case symbolicLink(identity: String)
+    case other(identity: String)
+}
+
+public struct RestoreConflict: Equatable, Sendable, Identifiable {
+    public static let approvedMissingTargetIdentity = "<missing>"
+    public let id: UUID
+    public let destination: RestoreDestination
+    public let kind: RestoreConflictKind
+    public let observedIdentity: String?
+    public let replaceable: Bool
+
+    public init(id: UUID = UUID(), destination: RestoreDestination, kind: RestoreConflictKind,
+                observedIdentity: String? = nil, replaceable: Bool) {
+        self.id = id
+        self.destination = destination
+        self.kind = kind
+        self.observedIdentity = observedIdentity
+        self.replaceable = replaceable
+    }
+}
+
+public struct RestorePlanID: Hashable, Sendable, Identifiable {
+    public let id: UUID
+    public init(_ id: UUID = UUID()) { self.id = id }
+}
+
+public struct RestorePlan: Sendable, Identifiable {
+    public let id: RestorePlanID
+    public let request: RestoreRequest
+    public let mappings: [RestoreMapping]
+    public let conflicts: [RestoreConflict]
+    public let totalBytes: Int64
+    public let fileCount: Int
+    public let directoryCount: Int
+    public let sourceOmissions: [OperationWarning]
+
+    public init(id: RestorePlanID = RestorePlanID(), request: RestoreRequest, mappings: [RestoreMapping],
+                conflicts: [RestoreConflict], totalBytes: Int64, fileCount: Int, directoryCount: Int,
+                sourceOmissions: [OperationWarning] = []) {
+        self.id = id
+        self.request = request
+        self.mappings = mappings
+        self.conflicts = conflicts
+        self.totalBytes = totalBytes
+        self.fileCount = fileCount
+        self.directoryCount = directoryCount
+        self.sourceOmissions = sourceOmissions
+    }
+}
+
+public enum RestoreItemState: String, Sendable {
+    case publishedAndVerified
+    case publishedUnverified
+    case skipped
+    case failed
+    case cancelled
+}
+
+public struct RestoreItemResult: Equatable, Sendable, Identifiable {
+    public let id: RemotePath
+    public let source: RemotePath
+    public let destination: RestoreDestination
+    public let state: RestoreItemState
+    public let detail: String?
+
+    public init(source: RemotePath, destination: RestoreDestination, state: RestoreItemState, detail: String? = nil) {
+        self.id = source
+        self.source = source
+        self.destination = destination
+        self.state = state
+        self.detail = detail
+    }
+}
+
+public struct RestoreBatchResult: Sendable {
+    public let operationID: OperationID
+    public let items: [RestoreItemResult]
+
+    public init(operationID: OperationID, items: [RestoreItemResult]) {
+        self.operationID = operationID
+        self.items = items
+    }
+}
+
 public enum ConflictKind: String, Codable, Sendable {
     case fileExists
     case directoryExists
@@ -528,6 +664,8 @@ public enum EngineError: Error, Codable, Equatable, Sendable {
     case unsupportedFilename(RemotePath)
     case sourceChanged(RemotePath)
     case insufficientSpace
+    case safeNoOverwriteUnavailable(RemotePath)
+    case destinationPublishedUnverified(String, String)
     case corruptedRepository(String)
     case repositoryBusy(URL)
     case repositoryDeviceMismatch(RepositoryID)
@@ -553,6 +691,8 @@ public enum EngineError: Error, Codable, Equatable, Sendable {
         case .emptySelection: [.chooseAccessiblePaths]
         case .destinationConflict(let conflict):
             conflict.kind == .fileExists ? [.allowReplacement] : [.chooseDestination]
+        case .safeNoOverwriteUnavailable: [.chooseDestination]
+        case .destinationPublishedUnverified: [.retry]
         case .sourceChanged: [.retry]
         case .insufficientSpace: [.chooseDestination]
         case .corruptedRepository, .transport: [.retry]

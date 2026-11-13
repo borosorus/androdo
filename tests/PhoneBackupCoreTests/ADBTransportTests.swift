@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import XCTest
 @testable import PhoneBackupCore
 
@@ -68,6 +69,80 @@ final class ADBTransportTests: XCTestCase {
         XCTAssertEqual(Array(calls[0].prefix(3)), ["-s", "phone-1", "shell"])
         XCTAssertTrue(calls[0].last?.contains("-maxdepth 0") == true)
         XCTAssertTrue(calls[0].last?.contains("'\\''") == true)
+    }
+
+    func testDestinationInspectionDoesNotFollowFinalSymlinkAndQuotesPath() async throws {
+        let path = try RemotePath("/sdcard/Dad's Pictures/link")
+        let runner = StubCommandRunner(outputs: [CommandOutput(data: Data("L|253:17:0:100".utf8), exitCode: 0)])
+        let transport = try makeTransport(runner: runner)
+        let device = try DeviceID(serial: "phone-1")
+
+        let state = try await transport.inspectDestination(path, on: device)
+
+        XCTAssertEqual(state, .symbolicLink(identity: "253:17:0:100"))
+        let calls = await runner.arguments()
+        XCTAssertTrue(calls[0].last?.contains("[ -L '") == true)
+        XCTAssertTrue(calls[0].last?.contains("'\\''") == true)
+    }
+
+    func testRemotePublicationVerifiesStagingAndUsesExclusiveLink() async throws {
+        let path = try RemotePath("/sdcard/RestoreTrial/photo.jpg")
+        let bytes = Data("verified remote data".utf8)
+        let expected = ContentObjectReference(sha256: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(),
+                                              size: Int64(bytes.count))
+        let outputs = [
+            CommandOutput(data: Data("M".utf8), exitCode: 0),
+            CommandOutput(data: Data("M".utf8), exitCode: 0),
+            CommandOutput(data: Data(), exitCode: 0),
+            CommandOutput(data: Data(), exitCode: 0),
+            CommandOutput(data: Data("D|253:17:0:2026-01-01 00:00:00.000000000 +0000".utf8), exitCode: 0),
+            CommandOutput(data: Data("M".utf8), exitCode: 0),
+            CommandOutput(data: Data(), exitCode: 0),
+            CommandOutput(data: Data(), exitCode: 0),
+            CommandOutput(data: Data(), exitCode: 0),
+        ]
+        let runner = StubCommandRunner(outputs: outputs, pullResponse: bytes)
+        let transport = try makeTransport(runner: runner)
+        let device = try DeviceID(serial: "phone-1")
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try bytes.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        try await transport.publishStagedFile(from: source, to: path, on: device, expected: expected, replacing: nil)
+
+        let calls = await runner.arguments()
+        XCTAssertEqual(calls.count, 9)
+        XCTAssertTrue(calls[2].contains("push"))
+        XCTAssertTrue(calls[3].contains("pull"))
+        XCTAssertTrue(calls[6].last?.contains("ln -T") == true)
+        XCTAssertFalse(calls[6].last?.contains("mv -f") == true)
+        XCTAssertTrue(calls[7].contains("pull"))
+    }
+
+    func testRemotePublicationCleansStageAfterPushFailure() async throws {
+        let path = try RemotePath("/sdcard/RestoreTrial/photo.jpg")
+        let runner = StubCommandRunner(outputs: [
+            CommandOutput(data: Data("M".utf8), exitCode: 0),
+            CommandOutput(data: Data("M".utf8), exitCode: 0),
+            CommandOutput(data: Data(), standardError: Data("push failed".utf8), exitCode: 1),
+            CommandOutput(data: Data(), exitCode: 0),
+        ])
+        let transport = try makeTransport(runner: runner)
+        let device = try DeviceID(serial: "phone-1")
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("data".utf8).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        do {
+            try await transport.publishStagedFile(from: source, to: path, on: device,
+                                                  expected: ContentObjectReference(sha256: String(repeating: "a", count: 64), size: 4),
+                                                  replacing: nil)
+            XCTFail("Expected the injected push failure")
+        } catch let error as EngineError {
+            guard case .transport = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+        let calls = await runner.arguments()
+        XCTAssertTrue(calls.last?.last?.contains("rm -f") == true)
     }
 
     func testPermissionDeniedListingIsStructuredForThatPath() async throws {
@@ -216,13 +291,18 @@ final class ADBTransportTests: XCTestCase {
 private actor StubCommandRunner: CommandRunning {
     private var outputs: [CommandOutput]
     private var calls: [[String]] = []
+    private let pullResponse: Data?
 
-    init(outputs: [CommandOutput]) {
+    init(outputs: [CommandOutput], pullResponse: Data? = nil) {
         self.outputs = outputs
+        self.pullResponse = pullResponse
     }
 
     func run(executable: URL, arguments: [String], timeout: TimeInterval) async throws -> CommandOutput {
         calls.append(arguments)
+        if arguments.count >= 5, arguments[2] == "pull", let pullResponse {
+            try pullResponse.write(to: URL(fileURLWithPath: arguments[4]))
+        }
         guard !outputs.isEmpty else { throw EngineError.transport("Unexpected command") }
         return outputs.removeFirst()
     }

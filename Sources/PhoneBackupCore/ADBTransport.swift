@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CryptoKit
 
 public struct CommandOutput: Equatable, Sendable {
     public let data: Data
@@ -191,7 +192,7 @@ private final class ProcessOutputReader: @unchecked Sendable {
     }
 }
 
-public actor ADBTransport: DeviceTransport, RemoteFileAccess {
+public actor ADBTransport: DeviceTransport, RemoteDestinationAccess {
     private static let findFormat = "%M|%s|%T@|%p\\0"
 
     private let configuration: ADBConfiguration
@@ -276,6 +277,169 @@ public actor ADBTransport: DeviceTransport, RemoteFileAccess {
 
     public func push(from localURL: URL, to path: RemotePath, on device: DeviceID) async throws {
         _ = try await command(["-s", device.serial, "push", localURL.path, path.description], path: path, device: device)
+    }
+
+    public func inspectDestination(_ path: RemotePath, on device: DeviceID) async throws -> RemoteDestinationState {
+        let quoted = Self.shellQuote(path.description)
+        let identity = "$(stat -c '%d:%i:%s:%y' \(quoted) 2>/dev/null)"
+        let remote = "if [ -L \(quoted) ]; then printf 'L|%s' \(identity); elif [ -f \(quoted) ]; then printf 'F|%s' \(identity); elif [ -d \(quoted) ]; then printf 'D|%s' \(identity); elif [ -e \(quoted) ]; then printf 'O|%s' \(identity); else printf 'M'; fi"
+        let output = try await command(["-s", device.serial, "shell", remote], path: path, device: device)
+        let record = String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        if record == "M" { return .missing }
+        let fields = record.split(separator: "|", maxSplits: 1).map(String.init)
+        guard fields.count == 2 else { throw EngineError.transport("ADB returned invalid destination metadata") }
+        let stats = fields[1].split(separator: ":", maxSplits: 3)
+        guard stats.count == 4, let size = Int64(stats[2]) else {
+            throw EngineError.transport("ADB returned invalid destination identity")
+        }
+        switch fields[0] {
+        case "F": return .regularFile(identity: fields[1], size: size)
+        case "D": return .directory(identity: fields[1])
+        case "L": return .symbolicLink(identity: fields[1])
+        default: return .other(identity: fields[1])
+        }
+    }
+
+    public func createDestinationDirectory(_ path: RemotePath, on device: DeviceID) async throws {
+        switch try await inspectDestination(path, on: device) {
+        case .directory: return
+        case .missing:
+            let remote = "mkdir \(Self.shellQuote(path.description))"
+            _ = try await command(["-s", device.serial, "shell", remote], path: path, device: device)
+            guard case .directory = try await inspectDestination(path, on: device) else {
+                throw EngineError.destinationConflict(TransferConflict(destination: path.description, kind: .unsafePath))
+            }
+        case .regularFile, .symbolicLink, .other:
+            throw EngineError.destinationConflict(TransferConflict(destination: path.description, kind: .unsafePath))
+        }
+    }
+
+    public func publishStagedFile(from localURL: URL, to path: RemotePath, on device: DeviceID,
+                                  expected: ContentObjectReference, replacing approvedIdentity: String?) async throws {
+        let parent = path.parent ?? .root
+        let stage = try parent.appending(".phonebackup-restore-\(UUID().uuidString.lowercased())")
+        let initial = try await inspectDestination(path, on: device)
+        try Self.requireDestinationApproval(initial, path: path, approvedIdentity: approvedIdentity)
+        guard case .missing = try await inspectDestination(stage, on: device) else {
+            throw EngineError.destinationConflict(TransferConflict(destination: stage.description, kind: .unsafePath))
+        }
+        let verification = FileManager.default.temporaryDirectory.appendingPathComponent("phonebackup-remote-verify-\(UUID().uuidString.lowercased())")
+        var published = false
+        var publicationAttempted = false
+        do {
+            try await push(from: localURL, to: stage, on: device)
+            try await pull(from: stage, on: device, to: verification)
+            try await Self.verifyLocalFile(verification, expected: expected)
+            try await verifyDestinationAncestors(parent, on: device)
+            let current = try await inspectDestination(path, on: device)
+            try Self.requireDestinationApproval(current, path: path, approvedIdentity: approvedIdentity)
+            if approvedIdentity == nil {
+                let remote = "ln -T \(Self.shellQuote(stage.description)) \(Self.shellQuote(path.description))"
+                publicationAttempted = true
+                do {
+                    _ = try await command(["-s", device.serial, "shell", remote], path: path, device: device)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch let error as EngineError {
+                    switch error {
+                    case .deviceUnavailable, .operationTimedOut, .adbUnavailable:
+                        throw error
+                    case .transport(let message) where message.lowercased().contains("file exists"):
+                        throw EngineError.destinationConflict(TransferConflict(destination: path.description, kind: .fileExists))
+                    case .transport:
+                        throw EngineError.safeNoOverwriteUnavailable(path)
+                    case .inaccessiblePath:
+                        throw EngineError.safeNoOverwriteUnavailable(path)
+                    default:
+                        throw error
+                    }
+                } catch {
+                    throw EngineError.transport(error.localizedDescription)
+                }
+                published = true
+            } else {
+                let remote = "mv -f -T \(Self.shellQuote(stage.description)) \(Self.shellQuote(path.description))"
+                publicationAttempted = true
+                _ = try await command(["-s", device.serial, "shell", remote], path: path, device: device)
+                published = true
+            }
+            let finalVerification = FileManager.default.temporaryDirectory.appendingPathComponent("phonebackup-remote-final-\(UUID().uuidString.lowercased())")
+            defer { try? FileManager.default.removeItem(at: finalVerification) }
+            try await pull(from: path, on: device, to: finalVerification)
+            try await Self.verifyLocalFile(finalVerification, expected: expected)
+            let cleanup = "rm -f \(Self.shellQuote(stage.description))"
+            _ = try? await command(["-s", device.serial, "shell", cleanup], path: path, device: device)
+        } catch {
+            await Task.detached { await self.removeRemoteStage(stage, on: device) }.value
+            try? FileManager.default.removeItem(at: verification)
+            let publicationMayHaveCompleted: Bool
+            if let engineError = error as? EngineError {
+                switch engineError {
+                case .deviceUnavailable, .operationTimedOut, .adbUnavailable, .transport:
+                    publicationMayHaveCompleted = true
+                default:
+                    publicationMayHaveCompleted = false
+                }
+            } else {
+                publicationMayHaveCompleted = error is CancellationError
+            }
+            if published || publicationAttempted && publicationMayHaveCompleted {
+                throw EngineError.destinationPublishedUnverified(path.description, error.localizedDescription)
+            }
+            throw error
+        }
+        try? FileManager.default.removeItem(at: verification)
+    }
+
+    private static func requireDestinationApproval(_ state: RemoteDestinationState, path: RemotePath,
+                                                   approvedIdentity: String?) throws {
+        switch state {
+        case .missing:
+            guard approvedIdentity == nil || approvedIdentity == RestoreConflict.approvedMissingTargetIdentity else {
+                throw EngineError.destinationConflict(TransferConflict(destination: path.description, kind: .fileExists))
+            }
+        case .regularFile(let identity, _):
+            guard approvedIdentity == identity else {
+                throw EngineError.destinationConflict(TransferConflict(destination: path.description, kind: .fileExists))
+            }
+        case .directory:
+            throw EngineError.destinationConflict(TransferConflict(destination: path.description, kind: .directoryExists))
+        case .symbolicLink, .other:
+            throw EngineError.destinationConflict(TransferConflict(destination: path.description, kind: .unsafePath))
+        }
+    }
+
+    private func removeRemoteStage(_ stage: RemotePath, on device: DeviceID) async {
+        let cleanup = "rm -f \(Self.shellQuote(stage.description))"
+        _ = try? await command(["-s", device.serial, "shell", cleanup], path: stage, device: device)
+    }
+
+    private func verifyDestinationAncestors(_ parent: RemotePath, on device: DeviceID) async throws {
+        var current = RemotePath.root
+        for (index, component) in parent.components.enumerated() {
+            current = try current.appending(component)
+            if index == 0 && component == "sdcard" { continue }
+            guard case .directory = try await inspectDestination(current, on: device) else {
+                throw EngineError.destinationConflict(TransferConflict(destination: current.description, kind: .unsafePath))
+            }
+        }
+    }
+
+    private static func verifyLocalFile(_ url: URL, expected: ContentObjectReference) async throws {
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true, let fileSize = values.fileSize,
+              Int64(fileSize) == expected.size else {
+            throw EngineError.corruptedRepository("Transferred restore stage has the wrong size")
+        }
+        let file = try FileHandle(forReadingFrom: url)
+        defer { try? file.close() }
+        var hasher = SHA256()
+        while let chunk = try file.read(upToCount: 1024 * 1024), !chunk.isEmpty {
+            try Task.checkCancellation()
+            hasher.update(data: chunk)
+        }
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        guard digest == expected.sha256 else { throw EngineError.corruptedRepository("Transferred restore stage failed SHA-256 verification") }
     }
 
     private func command(_ arguments: [String], path: RemotePath? = nil, device: DeviceID? = nil) async throws -> Data {

@@ -22,8 +22,8 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 1 — Define Swift engine models, protocols, and fake transport. Commit: `feat(engine): define backup and device contracts`. Review: approved; byte-exact path identity, explicit shared-storage scope, and safe conflict recovery covered.
 - [x] Step 2 — Implement ADB discovery, path-safe transport, and lazy browsing. Commit: `feat(adb): add device transport and lazy browsing`. Review: approved after fixes for ADB shell argument quoting, `/sdcard` symlink traversal, process-output draining, and structured disconnect errors.
 - [x] Step 3 — Implement the local backup repository and immutable restore points. Commit: `feat(repository): add durable snapshot storage`. Review: approved after fixes for stable per-open volume identity, copied repository IDs, and filesystem-compatible exclusive publication.
-- [ ] Step 4 — Implement selective backup planning, execution, progress, and recovery.
-- [ ] Step 5 — Implement verification and safe local/phone restore.
+- [x] Step 4 — Implement selective backup planning, execution, progress, and recovery. Commit: `feat(backup): add scoped snapshot operations`. Review: approved after fixes; see completion notes below.
+- [x] Step 5 — Implement verification and safe local/phone restore. Commit: `feat(restore): add verified batch restore`. Review: approved after fixes for source-base validation, descriptor cleanup, and failure-path coverage.
 - [ ] Step 6 — Implement direct file copy in both directions.
 - [ ] Step 7 — Build the backup-first SwiftUI experience and offline restore browser.
 - [ ] Step 8 — Build the phone file browser, Activity, and accessibility polish.
@@ -95,9 +95,11 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 **Commit:** `feat(restore): add verified batch restore`
 
-**Checks:** Local and phone restore tests for original/alternate destinations, missing targets, existing targets, replacement confirmation, collisions, partial failures, cancellation, and SHA-256 verification.
+**Checks:** Local and phone restore tests cover alternate destinations, missing targets, explicit replacement and stale-identity rejection, path containment and aliases, staged/final SHA-256 verification, partial failures, cancellation, and published-but-unverified outcomes. Full `swift test` passed (53 tests); `git diff --check` passed.
 
-**Review:** Confirm unrelated destination files are never removed, no-overwrite never silently becomes overwrite, and partial batch outcomes are accurately shown.
+**Review:** Approved. Review findings led to a source-base containment guard for phone mappings, closing intermediate directory descriptors on every exit, and deterministic tests for partial failure, cancellation, and publication whose final verification fails. Unrelated destination files are preserved and no-overwrite never silently becomes overwrite.
+
+**Complete:** Added immutable-source restore plans, full-batch conflict preflight, safe local descriptor-relative publication, staged and verified ADB restore, explicit identity-checked replacement, per-item batch outcomes, cancellation, and bounded operation events. User-selected restore targets are checked against managed repository paths. The device-side ancestor check narrows but cannot eliminate races caused by concurrent external filesystem changes; this limitation is not described as race-proof behavior.
 
 ### Step 6 — Direct file copy
 

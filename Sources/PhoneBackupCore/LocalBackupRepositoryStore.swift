@@ -242,6 +242,60 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
         }
     }
 
+    public func stageObject(_ reference: ContentObjectReference, in repository: RepositoryID) async throws -> URL {
+        let handle = try requireOpen(repository)
+        let stagingDirectory = handle.info.location.appendingPathComponent("staging", isDirectory: true)
+        let stagingURL = stagingDirectory.appendingPathComponent(UUID().uuidString.lowercased())
+        do {
+            try ensureMounted(handle)
+            try await Self.verifyObjectCancellable(at: objectURL(for: reference.sha256, repository: handle.info.location), reference: reference)
+            let descriptor = stagingURL.path.withCString { Darwin.open($0, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, S_IRUSR | S_IWUSR) }
+            guard descriptor >= 0 else { throw Self.posixFailure(errno, location: stagingURL) }
+            let output = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            var keepStaging = true
+            defer {
+                try? output.close()
+                if keepStaging { _ = stagingURL.path.withCString { Darwin.unlink($0) } }
+            }
+            let input = try FileHandle(forReadingFrom: objectURL(for: reference.sha256, repository: handle.info.location))
+            defer { try? input.close() }
+            var hasher = SHA256()
+            var copied: Int64 = 0
+            while let chunk = try input.read(upToCount: 1024 * 1024), !chunk.isEmpty {
+                try Task.checkCancellation()
+                copied += Int64(chunk.count)
+                guard copied <= reference.size else { throw EngineError.corruptedRepository("Content object size changed") }
+                hasher.update(data: chunk)
+                try output.write(contentsOf: chunk)
+            }
+            try Task.checkCancellation()
+            guard copied == reference.size,
+                  hasher.finalize().map({ String(format: "%02x", $0) }).joined() == reference.sha256 else {
+                throw EngineError.corruptedRepository("Content object changed while staging")
+            }
+            try output.synchronize()
+            try output.close()
+            try Self.syncDirectory(stagingDirectory)
+            keepStaging = false
+            return stagingURL
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw Self.mapRepositoryError(error, location: handle.info.location)
+        }
+    }
+
+    public func discardStagedObject(at url: URL, in repository: RepositoryID) async {
+        guard let handle = open[repository] else { return }
+        let staging = handle.info.location.appendingPathComponent("staging", isDirectory: true).standardizedFileURL
+        let candidate = url.standardizedFileURL
+        guard candidate.deletingLastPathComponent() == staging else { return }
+        var info = stat()
+        guard candidate.path.withCString({ Darwin.lstat($0, &info) }) == 0,
+              (info.st_mode & S_IFMT) == S_IFREG else { return }
+        _ = candidate.path.withCString { Darwin.unlink($0) }
+    }
+
     public func backupAttempts(in repository: RepositoryID) async throws -> [BackupAttempt] {
         let handle = try requireOpen(repository)
         do {

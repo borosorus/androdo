@@ -18,13 +18,14 @@ private struct FakePullMutation {
     let data: Data
 }
 
-public actor FakeDeviceTransport: DeviceTransport, RemoteFileAccess {
+public actor FakeDeviceTransport: DeviceTransport, RemoteDestinationAccess {
     private var devices: [AndroidDevice]
     private var entries: [DeviceID: [RemoteEntry]] = [:]
     private var fileData: [DeviceID: [RemotePath: Data]] = [:]
     private var directories: [DeviceID: Set<RemotePath>] = [:]
     private var failures: [FakeDeviceFailureKey: [EngineError]] = [:]
     private var mutationsAfterPull: [DeviceID: [FakePullMutation]] = [:]
+    private var publishUnverifiedPaths: Set<RemotePath> = []
     private var pullCalls: [DeviceID: [RemotePath]] = [:]
     private var childrenCalls: [DeviceID: [RemotePath]] = [:]
 
@@ -68,6 +69,10 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteFileAccess {
         mutationsAfterPull[device, default: []].append(FakePullMutation(path: entry.path, entry: entry, data: data))
     }
 
+    public func reportNextPublicationUnverified(at path: RemotePath) {
+        publishUnverifiedPaths.insert(path)
+    }
+
     public func recordedPulls(on device: DeviceID) -> [RemotePath] { pullCalls[device, default: []] }
     public func recordedChildrenCalls(on device: DeviceID) -> [RemotePath] { childrenCalls[device, default: []] }
 
@@ -96,6 +101,57 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteFileAccess {
             throw EngineError.missingPath(path)
         }
         return entry
+    }
+
+    public func inspectDestination(_ path: RemotePath, on device: DeviceID) async throws -> RemoteDestinationState {
+        guard devices.contains(where: { $0.id == device && $0.state == .device }) else {
+            throw EngineError.deviceUnavailable(device)
+        }
+        guard let entry = entries[device, default: []].first(where: { $0.path == path }) else { return .missing }
+        let identity = "\(entry.kind.rawValue):\(entry.size ?? -1):\(entry.modifiedAt?.timeIntervalSince1970 ?? 0)"
+        switch entry.kind {
+        case .file: return .regularFile(identity: identity, size: entry.size ?? 0)
+        case .directory: return .directory(identity: identity)
+        case .symbolicLink: return .symbolicLink(identity: identity)
+        case .other: return .other(identity: identity)
+        }
+    }
+
+    public func createDestinationDirectory(_ path: RemotePath, on device: DeviceID) async throws {
+        if case .directory = try await inspectDestination(path, on: device) { return }
+        guard case .missing = try await inspectDestination(path, on: device) else {
+            throw EngineError.destinationConflict(TransferConflict(destination: path.description, kind: .directoryExists))
+        }
+        seed(RemoteEntry(path: path, kind: .directory), on: device)
+    }
+
+    public func publishStagedFile(from localURL: URL, to path: RemotePath, on device: DeviceID,
+                                  expected: ContentObjectReference, replacing identity: String?) async throws {
+        let state = try await inspectDestination(path, on: device)
+        switch state {
+        case .missing:
+            guard identity == nil || identity == RestoreConflict.approvedMissingTargetIdentity else {
+                throw EngineError.sourceChanged(path)
+            }
+        case .regularFile(let actual, _):
+            guard identity == actual else {
+                throw EngineError.destinationConflict(TransferConflict(destination: path.description, kind: .fileExists))
+            }
+        case .directory:
+            throw EngineError.destinationConflict(TransferConflict(destination: path.description, kind: .directoryExists))
+        case .symbolicLink, .other:
+            throw EngineError.destinationConflict(TransferConflict(destination: path.description, kind: .unsafePath))
+        }
+        let data = try Data(contentsOf: localURL)
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard Int64(data.count) == expected.size, digest == expected.sha256 else {
+            throw EngineError.corruptedRepository("Fake remote publication verification failed")
+        }
+        let date = Date()
+        seed(RemoteEntry(path: path, kind: .file, size: Int64(data.count), modifiedAt: date), on: device, data: data)
+        if publishUnverifiedPaths.remove(path) != nil {
+            throw EngineError.destinationPublishedUnverified(path.description, "Simulated final verification failure")
+        }
     }
 
     public func pull(from path: RemotePath, on device: DeviceID, to localURL: URL) async throws {
@@ -141,8 +197,13 @@ public actor FakeBackupRepositoryStore: BackupRepositoryWriting {
     private var stored: [RepositoryID: (BackupRepositoryInfo, [RestorePoint], [RestorePointID: [BackupEntry]])] = [:]
     private var objects: [RepositoryID: [String: Data]] = [:]
     private var attempts: [BackupAttemptID: StoredAttempt] = [:]
+    private var stagingDelayForTesting: Duration?
 
     public init() {}
+
+    public func delayStagingForTesting(_ duration: Duration?) {
+        stagingDelayForTesting = duration
+    }
 
     public func seed(
         repository: BackupRepositoryInfo,
@@ -171,6 +232,22 @@ public actor FakeBackupRepositoryStore: BackupRepositoryWriting {
               SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == reference.sha256 else {
             throw EngineError.corruptedRepository("Content object verification failed")
         }
+    }
+
+    public func stageObject(_ reference: ContentObjectReference, in repository: RepositoryID) async throws -> URL {
+        if let stagingDelayForTesting { try await Task.sleep(for: stagingDelayForTesting) }
+        try await verifyObject(reference, in: repository)
+        guard let data = objects[repository]?[reference.sha256] else {
+            throw EngineError.corruptedRepository("Missing content object")
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("phone-backup-stage-\(UUID().uuidString)")
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
+    public func discardStagedObject(at url: URL, in repository: RepositoryID) async {
+        guard url.lastPathComponent.hasPrefix("phone-backup-stage-") else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 
     public func backupAttempts(in repository: RepositoryID) async throws -> [BackupAttempt] {
@@ -232,6 +309,10 @@ public actor FakeBackupRepositoryStore: BackupRepositoryWriting {
         let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         objects[repository, default: [:]][hash] = data
         return ContentObjectReference(sha256: hash, size: Int64(data.count))
+    }
+
+    public func removeObjectForTesting(_ reference: ContentObjectReference, in repository: RepositoryID) {
+        objects[repository]?.removeValue(forKey: reference.sha256)
     }
 
     public func publish(_ manifest: RestorePointManifest, in repository: RepositoryID) async throws -> RestorePoint {
