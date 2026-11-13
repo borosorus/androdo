@@ -3,24 +3,16 @@ import SwiftUI
 
 struct RestoreLibraryView: View {
     @Environment(AppModel.self) private var model
-    @State private var showingOmissionConfirmation = false
 
     var body: some View {
-        @Bindable var model = model
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Backups").font(.largeTitle.weight(.semibold))
-                    Text("Browse restore points and export files to this Mac, even when the phone is disconnected.")
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
+            AppPageHeader(title: "Backups", subtitle: "Browse restore points and export files, even when the phone is disconnected.") {
                 Button(model.backupLocation == nil ? "Choose Backup Folder…" : "Change Folder…") {
                     if let folder = NativeFilePanels.chooseFolder(prompt: "Open Backup Folder", message: "Select the folder containing PhoneBackup device repositories.") {
                         Task { await model.chooseBackupLocation(folder) }
                     }
                 }.disabled(model.isBusy)
-            }.padding(24)
+            }
             Divider()
             if model.requiresRepositoryRecoveryConfirmation {
                 ContentUnavailableView {
@@ -37,24 +29,14 @@ struct RestoreLibraryView: View {
                 ContentUnavailableView("No backup repository", systemImage: "externaldrive", description: Text("Choose a folder to open or create a backup repository. A connected phone is not needed to browse existing backups."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                HStack(spacing: 0) {
+                HSplitView {
                     repositoryColumn.frame(minWidth: 190, idealWidth: 220, maxWidth: 280)
-                    Divider()
                     pointColumn.frame(minWidth: 220, idealWidth: 260, maxWidth: 320)
-                    Divider()
-                    RestorePointBrowser().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    RestorePointBrowser().frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            if model.isOperationRunning || model.recoveryAttempt != nil || model.operationEvent != nil || !model.pendingAttempts.isEmpty {
-                Divider()
-                OperationStatusView(showingOmissionConfirmation: $showingOmissionConfirmation)
-                    .padding(16)
-            }
         }
-        .confirmationDialog("Finish this backup with skipped paths?", isPresented: $showingOmissionConfirmation, titleVisibility: .visible) {
-            Button("Finish with omissions", role: .destructive) { Task { await model.finishBackupWithOmissions() } }
-            Button("Keep incomplete", role: .cancel) {}
-        } message: { Text("The restore point will be marked incomplete and will list the paths that could not be saved.") }
+        .navigationTitle("Backups")
     }
 
     private var repositoryColumn: some View {

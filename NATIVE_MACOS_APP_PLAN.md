@@ -27,6 +27,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 6 — Implement direct file copy in both directions. Commit: `feat(transfer): add direct file copy`. Review: approved after fixes for destination parents, source ancestors, directory revalidation, cancellation, error reporting, repository containment, descriptor-relative traversal, and plan mapping consistency.
 - [x] Step 7 — Build the backup-first SwiftUI experience and offline restore browser. Commit: `feat(ui): add backup and local restore flows`. Review: approved, no blockers; follow-up findings addressed.
 - [x] Step 8 — Build the phone file browser, Activity, and accessibility polish. Commit: `feat(ui): add phone browser and operation activity`. Review: approved after fixes for device-bound restore browsing, Finder promise device binding, asynchronous safe-no-overwrite recovery, empty-folder drops, verified Activity counts, and preventing review dismissal during operation startup.
+- [x] Step 8.1 — Refine native navigation, selection, and shared operation/review flows. Commit: `refactor(ui): unify native macOS navigation and flows`. Review: approved after fixes for reconnect navigation, restore replacement messaging, bounded global recovery, and accurate exclusion labels.
 - [ ] Step 9 — Complete packaging, CI, and end-to-end acceptance. Local packaging and CI committed as `build(macOS): package app and add acceptance checks`; reviewer approved. Phone acceptance remains pending an explicitly selected disposable folder.
 
 ## Steps
@@ -136,6 +137,18 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 **Review:** Confirm directory browsing remains shallow, destructive actions are explicit, and path/serial details are not exposed in persistent diagnostics by default.
 
 **Complete:** Added lazy, immediate-child phone browsing, sorting and multi-selection, direct copy in both directions with explicit conflict review, Finder drops and outbound file promises, same-device restore to original or chosen folders, and bounded session-only Activity summaries. Activity omits paths, serial numbers, and raw transport errors; durable backup recovery remains in the repository. `swift test` passed (67 core and 9 UI-model tests); `git diff --check` passed. Reviewer approved after the fixes recorded above. AppModel orchestration lacks focused regression fixtures for device binding and asynchronous replacement replanning; Finder promise, nested sheet presentation, VoiceOver/keyboard navigation, appearance, and real-device flows still require manual acceptance in Step 9. No phone storage was read or changed for this step; `PhoneBackupTrial/` remains untracked and excluded.
+
+### Step 8.1 — Native macOS navigation and shared flows
+
+**Deliverable:** Refine the native sidebar so device selection is separate from page navigation. Keep operation progress and recovery visible across pages, make backup folder choices transactional, and align review sheets and page layouts around consistent macOS headers, pinned actions, system colors, and resizable split views. Preserve the backup-first workflow, explicit replacement approvals, lazy device browsing, and offline restore browsing.
+
+**Commit:** `refactor(ui): unify native macOS navigation and flows`
+
+**Checks:** Swift tests cover selection draft apply/discard semantics and navigation remains shallow; build the SwiftUI app, run the full Swift suite, rebuild the local app bundle, and run `git diff --check`. Do not read or write phone folders for this refactor.
+
+**Review:** Confirm page selection is clear, operation cancellation and recovery remain available on all pages, review actions stay visible with long conflict lists, Cancel discards uncommitted selection changes, and sheet presentation does not close when backup startup fails.
+
+**Complete:** Added selectable native sidebar navigation separated from device choice, a bounded global progress/recovery area with centralized omission confirmation, shared page and sheet components, pinned cancel/confirm actions, transactional backup selection, correct selected-versus-excluded summaries, keyboard/context-menu folder opening, resizable backup columns, and collapsed restore-tree rows. `swift test` passed (69 core and 14 UI-model tests); `git diff --check` passed; the Apple Silicon app bundle rebuilt and its ad-hoc signature verified. Reviewer approved after the listed fixes. No phone folders were read or changed. Interactive sheet behavior, Return-key navigation, VoiceOver, and very large recovery lists still need manual visual acceptance in Step 9.
 
 ### Step 9 — Packaging and end-to-end acceptance
 

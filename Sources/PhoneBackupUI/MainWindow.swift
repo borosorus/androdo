@@ -5,14 +5,15 @@ import SwiftUI
 public struct MainWindow: View {
     @Environment(AppModel.self) private var model
     @State private var showingADBPanel = false
+    @State private var showingOmissionConfirmation = false
 
     public init() {}
 
     public var body: some View {
         @Bindable var model = model
         NavigationSplitView {
-            List {
-                Section("ANDROID DEVICES") {
+            List(selection: Binding<AppSection?>(get: { model.section }, set: { section in if let section { model.section = section } })) {
+                Section("DEVICES") {
                     if model.devices.isEmpty {
                         Label(model.hasADB ? "No device connected" : "ADB not found", systemImage: "cable.connector.slash")
                             .foregroundStyle(.secondary)
@@ -27,33 +28,17 @@ public struct MainWindow: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("Select \(device.model ?? "Android device") \(device.id.serial)")
                     }
-                    Button {
-                        Task { await model.browseFiles() }
-                    } label: {
-                        Label("Browse Files…", systemImage: "folder.badge.gearshape")
-                    }.disabled(model.isBusy || model.selectedDevice?.state != .device)
-                    Button {
-                        Task { await model.refreshDevices() }
-                    } label: {
-                        Label("Refresh devices", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(model.isBusy || !model.hasADB)
+                }
+
+                Section("PHONE") {
+                    Label("Overview", systemImage: "iphone.gen3").tag(AppSection.device)
+                    Label("Files", systemImage: "folder").tag(AppSection.files)
+                        .foregroundStyle(model.selectedDevice?.state == .device ? Color.primary : Color.secondary)
                 }
 
                 Section("LIBRARY") {
-                    Button {
-                        model.section = .backups
-                    } label: {
-                        Label("Backups", systemImage: "externaldrive")
-                            .foregroundStyle(model.section == .backups ? Color.accentColor : Color.primary)
-                    }
-                    .buttonStyle(.plain)
-                    Button {
-                        model.section = .activity
-                    } label: {
-                        Label("Activity", systemImage: "clock.arrow.circlepath")
-                            .foregroundStyle(model.section == .activity ? Color.accentColor : Color.primary)
-                    }.buttonStyle(.plain)
+                    Label("Backups", systemImage: "externaldrive").tag(AppSection.backups)
+                    Label("Activity", systemImage: "clock.arrow.circlepath").tag(AppSection.activity)
                 }
             }
             .listStyle(.sidebar)
@@ -78,6 +63,22 @@ public struct MainWindow: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if showsOperationStatus {
+                    ScrollView {
+                        OperationStatusView(showingOmissionConfirmation: $showingOmissionConfirmation)
+                            .padding(16)
+                    }
+                    .frame(maxHeight: 280)
+                    .background(.bar)
+                }
+            }
+            .confirmationDialog("Finish this backup with skipped paths?", isPresented: $showingOmissionConfirmation, titleVisibility: .visible) {
+                Button("Finish with omissions", role: .destructive) { Task { await model.finishBackupWithOmissions() } }
+                Button("Keep incomplete", role: .cancel) {}
+            } message: {
+                Text("The restore point will be marked incomplete and will list the paths that could not be saved.")
+            }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -113,8 +114,11 @@ public struct MainWindow: View {
             }
         }
     }
-}
 
+    private var showsOperationStatus: Bool {
+        model.isOperationRunning || model.recoveryAttempt != nil || model.operationEvent != nil || !model.pendingAttempts.isEmpty
+    }
+}
 private struct DeviceSidebarRow: View {
     let device: AndroidDevice
     let isSelected: Bool
@@ -173,20 +177,5 @@ public enum UIFormatting {
         case .local(let url): url.path
         case .phone(let path): path.description
         }
-    }
-}
-
-struct MessageBanner: View {
-    let text: String
-    var symbol = "info.circle"
-    var isWarning = false
-
-    var body: some View {
-        Label(text, systemImage: symbol)
-            .font(.callout)
-            .foregroundStyle(isWarning ? Color.orange : Color.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background((isWarning ? Color.orange : Color.secondary).opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
     }
 }

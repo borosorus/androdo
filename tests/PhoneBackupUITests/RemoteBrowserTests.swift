@@ -4,6 +4,28 @@ import XCTest
 
 @MainActor
 final class RemoteBrowserTests: XCTestCase {
+    func testSharedStorageOpensWhenDeviceBecomesReadyAfterInitialVisit() async throws {
+        let id = try DeviceID(serial: "browser-reconnect-test")
+        let device = AndroidDevice(id: id, state: .device)
+        let transport = FakeDeviceTransport(devices: [device])
+        let root = try RemotePath("/sdcard")
+        await transport.seed(RemoteEntry(path: root, kind: .directory), on: id)
+        let browser = RemoteBrowserModel(remote: transport)
+
+        await browser.openRoot()
+        XCTAssertFalse(browser.hasOpenedRoot)
+        let beforeDevice = await transport.recordedChildrenCalls(on: id)
+        XCTAssertTrue(beforeDevice.isEmpty)
+
+        browser.setDevice(device)
+        await browser.openRoot()
+
+        XCTAssertEqual(browser.currentDirectory, root)
+        XCTAssertTrue(browser.hasOpenedRoot)
+        let afterDevice = await transport.recordedChildrenCalls(on: id)
+        XCTAssertEqual(afterDevice, [root])
+    }
+
     func testOpeningBrowserListsOnlyTheRequestedDirectory() async throws {
         let id = try DeviceID(serial: "browser-test")
         let device = AndroidDevice(id: id, state: .device)

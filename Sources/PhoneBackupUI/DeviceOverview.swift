@@ -4,175 +4,282 @@ import SwiftUI
 struct DeviceOverview: View {
     @Environment(AppModel.self) private var model
     @State private var showingSelection = false
-    @State private var showingOmissionConfirmation = false
 
     var body: some View {
-        @Bindable var model = model
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                HStack(spacing: 14) {
-                    Image(systemName: "externaldrive.connected.to.line.below")
-                        .font(.system(size: 30)).foregroundStyle(.tint)
-                        .frame(width: 58, height: 58)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(model.selectedDevice?.model ?? "Connect an Android device")
-                            .font(.title2.weight(.semibold))
-                        Text(model.selectedDevice.map { "\($0.id.serial) · \($0.state == .device ? "Ready" : String(describing: $0.state))" } ?? "Connect by USB and authorize this Mac")
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("Browse Files…") { Task { await model.browseFiles() } }
-                        .disabled(model.isBusy || model.selectedDevice?.state != .device)
+            VStack(alignment: .leading, spacing: 20) {
+                AppPageHeader(title: "Overview", subtitle: "Choose what to save, then review the backup before it starts.")
+
+                GroupBox("Android device") {
+                    HStack(spacing: 14) {
+                        Image(systemName: deviceSymbol)
+                            .font(.system(size: 25))
+                            .foregroundStyle(model.selectedDevice?.state == .device ? Color.accentColor : Color.secondary)
+                            .frame(width: 48, height: 48)
+                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(model.selectedDevice?.model ?? "No device connected")
+                                .font(.headline)
+                            Text(deviceStatus)
+                                .font(.callout).foregroundStyle(.secondary)
+                            if let device = model.selectedDevice {
+                                Text(device.id.serial).font(.caption.monospaced()).foregroundStyle(.tertiary).textSelection(.enabled)
+                            }
+                        }
+                        Spacer()
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(4)
                 }
 
                 if let message = model.statusMessage { MessageBanner(text: message) }
 
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Label("Backup destination", systemImage: "externaldrive")
-                                .font(.headline)
-                            Spacer()
-                            Button(model.backupLocation == nil ? "Choose Folder…" : "Change…") {
-                                if let folder = NativeFilePanels.chooseFolder(prompt: "Choose Backup Folder", message: "PhoneBackup creates a device repository inside this folder.") {
-                                    Task { await model.chooseBackupLocation(folder) }
-                                }
-                            }.disabled(model.isBusy)
+                GroupBox("Backup destination") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        LabeledContent("Location") {
+                            Text(model.backupLocation?.path ?? "Choose a folder on this Mac")
+                                .foregroundStyle(model.backupLocation == nil ? Color.secondary : Color.primary)
+                                .lineLimit(2).textSelection(.enabled)
                         }
-                        if let url = model.backupLocation {
-                            Label(url.path, systemImage: "folder")
-                                .font(.callout).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
-                        } else {
-                            Text("Choose a local or external folder. Backups stay on this Mac and are not uploaded.")
-                                .foregroundStyle(.secondary)
+                        Text("Backups remain on this Mac or the external drive you choose.")
+                            .font(.callout).foregroundStyle(.secondary)
+                        HStack {
+                            Spacer()
+                            Button(model.backupLocation == nil ? "Choose Folder…" : "Change Folder…") {
+                                guard let folder = NativeFilePanels.chooseFolder(
+                                    prompt: "Choose Backup Folder",
+                                    message: "PhoneBackup creates a device repository inside this folder.") else { return }
+                                Task { await model.chooseBackupLocation(folder) }
+                            }
+                            .disabled(model.isBusy)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(4)
                 }
 
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 14) {
+                GroupBox("What to back up") {
+                    VStack(alignment: .leading, spacing: 12) {
                         HStack {
-                            Label("What to back up", systemImage: "checklist")
-                                .font(.headline)
+                            Label(selectionTitle, systemImage: "checklist").font(.headline)
                             Spacer()
                             Button("Choose Folders…") { showingSelection = true }
-                                .disabled(model.isBusy || model.selectedDevice == nil)
+                                .disabled(model.isBusy || model.selectedDevice?.state != .device)
                         }
-                        Text(selectionSummary)
-                            .foregroundStyle(.secondary)
-                        if model.isShowingBackupReview || model.isPlanningBackup { EmptyView() }
-                        HStack {
-                            Button {
-                                Task { await model.reviewBackup() }
-                            } label: {
-                                if model.isPlanningBackup { ProgressView().controlSize(.small); Text("Preparing plan…") }
-                                else { Label("Back Up Now", systemImage: "arrow.down.to.line") }
+                        Text(selectionDetail).foregroundStyle(.secondary)
+                        if !selectionPathRows.isEmpty {
+                            DisclosureGroup(selectionDisclosureTitle) {
+                                ForEach(selectionPathRows) { row in
+                                    HStack(spacing: 8) {
+                                        Image(systemName: row.isExcluded ? "minus.circle" : "folder")
+                                            .foregroundStyle(row.isExcluded ? Color.secondary : Color.accentColor)
+                                        Text(row.path.description).lineLimit(1).textSelection(.enabled)
+                                        if row.isExcluded {
+                                            Text("Excluded").font(.caption).foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                }.padding(.top, 4)
                             }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(model.isBusy || model.backupLocation == nil || model.selectedDevice == nil)
-                            if model.isPlanningBackup {
-                                Button("Cancel") { model.cancelPlanning() }
-                            }
-                            Spacer()
+                            .font(.callout)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(4)
                 }
 
-                if model.isOperationRunning || model.recoveryAttempt != nil || model.operationEvent != nil || !model.pendingAttempts.isEmpty {
-                    OperationStatusView(showingOmissionConfirmation: $showingOmissionConfirmation)
+                HStack {
+                    if model.isPlanningBackup {
+                        ProgressView("Preparing backup plan…")
+                        Button("Cancel") { model.cancelPlanning() }.keyboardShortcut(.cancelAction)
+                    } else {
+                        Button {
+                            Task { await model.reviewBackup() }
+                        } label: {
+                            Label("Back Up Now", systemImage: "arrow.down.to.line")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.isBusy || model.backupLocation == nil || model.selectedDevice?.state != .device)
+                    }
+                    Spacer()
                 }
             }
-            .padding(28)
-            .frame(maxWidth: 780, alignment: .leading)
+            .frame(maxWidth: 760, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .top)
+            .padding(.horizontal, 28)
+            .padding(.bottom, 28)
         }
-        .navigationTitle("Device")
+        .navigationTitle("Overview")
         .sheet(isPresented: $showingSelection) { BackupSelectionEditor() }
-        .confirmationDialog("Finish this backup with skipped paths?", isPresented: $showingOmissionConfirmation, titleVisibility: .visible) {
-            Button("Finish with omissions", role: .destructive) { Task { await model.finishBackupWithOmissions() } }
-            Button("Keep incomplete", role: .cancel) {}
-        } message: {
-            Text("The restore point will be marked incomplete and will list the paths that could not be saved.")
+    }
+
+    private var deviceSymbol: String {
+        model.selectedDevice?.state == .device ? "iphone.gen3" : "cable.connector.slash"
+    }
+
+    private var deviceStatus: String {
+        guard let device = model.selectedDevice else { return "Connect by USB and authorize this Mac." }
+        return switch device.state {
+        case .device: "Connected and ready"
+        case .unauthorized: "Unlock the phone and allow USB debugging."
+        case .offline: "The phone is offline. Reconnect the USB cable."
+        case .bootloader, .recovery, .sideload: "Android is in a maintenance mode. Restart it to browse shared files."
+        case .unknown(let state): "Unrecognized device state: \(state)"
         }
     }
 
-    private var selectionSummary: String {
+    private var selectionTitle: String {
+        switch model.backupSelection.scope {
+        case .allSharedStorage: "All shared files"
+        case .selected(let roots): roots.isEmpty ? "No folders selected" : "\(roots.count) selected"
+        }
+    }
+
+    private var selectionDetail: String {
         switch model.backupSelection.scope {
         case .allSharedStorage:
             let excluded = model.backupSelection.excludedRoots.count
-            return excluded == 0 ? "All shared files on the device (/sdcard)" : "All shared files except \(excluded) excluded folder(s)"
+            return excluded == 0 ? "Files Android exposes under /sdcard." : "Shared storage, excluding \(excluded) folder(s)."
         case .selected(let roots):
-            guard !roots.isEmpty else { return "No folders selected" }
-            let picked = roots.map(\.description).joined(separator: " · ")
-            if model.backupSelection.excludedRoots.isEmpty { return picked }
-            return "\(picked) · \(model.backupSelection.excludedRoots.count) excluded"
+            return roots.isEmpty ? "Choose the folders you want in each restore point." : "Only the selected files and folders are included."
         }
     }
+
+    private var selectionDisclosureTitle: String {
+        switch model.backupSelection.scope {
+        case .allSharedStorage: "Show excluded folders"
+        case .selected: model.backupSelection.excludedRoots.isEmpty ? "Show selected folders" : "Show selected and excluded folders"
+        }
+    }
+
+    private var selectionPathRows: [BackupScopePathRow] {
+        let rows: [BackupScopePathRow]
+        switch model.backupSelection.scope {
+        case .allSharedStorage:
+            rows = model.backupSelection.excludedRoots.map { BackupScopePathRow(path: $0, isExcluded: true) }
+        case .selected(let roots):
+            rows = roots.map { BackupScopePathRow(path: $0, isExcluded: false) }
+                + model.backupSelection.excludedRoots.map { BackupScopePathRow(path: $0, isExcluded: true) }
+        }
+        return rows.sorted {
+            if $0.path == $1.path { return !$0.isExcluded && $1.isExcluded }
+            return RemotePath.bytewiseLess($0.path, $1.path)
+        }
+    }
+}
+
+private struct BackupScopePathRow: Identifiable {
+    let path: RemotePath
+    let isExcluded: Bool
+    var id: String { "\(isExcluded ? "excluded" : "selected"): \(path.description)" }
 }
 
 struct BackupSelectionEditor: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var entries: [RemoteEntry] = []
+    @State private var draftSelection: BackupSelection?
 
     private let root = try! RemotePath("/sdcard")
 
     var body: some View {
-        @Bindable var model = model
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Choose backup folders").font(.title2.weight(.semibold))
-                    Text("Folders are listed only when you open them.").foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
-            }.padding(20)
+            AppPageHeader(title: "Choose backup folders", subtitle: "Folders are listed only when you open them.")
             Divider()
-            Toggle(isOn: Binding(
-                get: { if case .allSharedStorage = model.backupSelection.scope { true } else { false } },
-                set: { model.setBackupSelection($0 ? BackupSelection(scope: .allSharedStorage) : BackupSelection()) }
-            )) {
+            Toggle(isOn: allSharedFilesBinding) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("All shared files").fontWeight(.medium)
-                    Text("Includes files exposed under /sdcard, including accessible Android media/data/obb folders.")
+                    Text("Includes files exposed under /sdcard, including accessible Android media, data, and obb folders.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }.padding(18)
             Divider()
             if model.isLoadingFolder && entries.isEmpty {
                 ProgressView("Opening /sdcard…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let error = model.errorMessage, entries.isEmpty {
+                ContentUnavailableView("Folders unavailable", systemImage: "folder.badge.questionmark", description: Text(error))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if entries.isEmpty {
                 ContentUnavailableView("No folders available", systemImage: "folder.badge.questionmark", description: Text("Connect and authorize a device to browse shared storage."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
                     ForEach(entries) { entry in
-                        RemoteSelectionRow(entry: entry, depth: 0)
+                        RemoteSelectionRow(entry: entry, selection: selectionBinding, depth: 0)
                     }
                 }.listStyle(.inset)
             }
             Divider()
             HStack {
-                Text(selectedSummary).font(.callout).foregroundStyle(.secondary)
+                Text(draftSummary).font(.callout).foregroundStyle(.secondary)
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
-            }.padding(16)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Done") {
+                    model.setBackupSelection(currentSelection)
+                    dismiss()
+                }.keyboardShortcut(.defaultAction)
+            }.padding(.horizontal, 20).padding(.vertical, 14)
         }
         .frame(minWidth: 600, minHeight: 480)
-        .task { entries = await model.listRemoteChildren(of: root).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending } }
+        .onAppear { draftSelection = model.backupSelection }
+        .task {
+            let result = await model.listRemoteChildren(of: root)
+            entries = result.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        }
     }
 
-    private var selectedSummary: String {
-        if case .selected(let roots) = model.backupSelection.scope { return "\(roots.count) folder(s) selected" }
-        return "All shared files selected"
+    private var currentSelection: BackupSelection { draftSelection ?? model.backupSelection }
+
+    private var selectionBinding: Binding<BackupSelection> {
+        Binding(get: { currentSelection }, set: { draftSelection = $0 })
+    }
+
+    private var allSharedFilesBinding: Binding<Bool> {
+        Binding(get: {
+            if case .allSharedStorage = currentSelection.scope { true } else { false }
+        }, set: { enabled in
+            selectionBinding.wrappedValue = enabled ? BackupSelection(scope: .allSharedStorage) : BackupSelection()
+        })
+    }
+
+    private var draftSummary: String {
+        switch currentSelection.scope {
+        case .allSharedStorage:
+            return currentSelection.excludedRoots.isEmpty ? "All shared files selected" : "All shared files · \(currentSelection.excludedRoots.count) excluded"
+        case .selected(let roots): return "\(roots.count) file(s) or folder(s) selected"
+        }
+    }
+}
+
+enum BackupSelectionEditing {
+    static func set(_ isSelected: Bool, path: RemotePath, in selection: BackupSelection) -> BackupSelection {
+        var roots: [RemotePath]
+        var exclusions = selection.excludedRoots
+        switch selection.scope {
+        case .allSharedStorage:
+            if isSelected {
+                exclusions.removeAll { $0 == path || path.isEqualOrDescendant(of: $0) }
+            } else {
+                exclusions.removeAll { $0.isEqualOrDescendant(of: path) }
+                exclusions.append(path)
+            }
+            return BackupSelection(scope: .allSharedStorage, excludedRoots: exclusions)
+        case .selected(let existing): roots = existing
+        }
+
+        if isSelected {
+            exclusions.removeAll { $0 == path || path.isEqualOrDescendant(of: $0) }
+            if !roots.contains(where: { path.isEqualOrDescendant(of: $0) }) { roots.append(path) }
+        } else {
+            let coveredBySelectedAncestor = roots.contains { $0 != path && path.isEqualOrDescendant(of: $0) }
+            roots.removeAll { $0.isEqualOrDescendant(of: path) }
+            if coveredBySelectedAncestor {
+                exclusions.removeAll { $0.isEqualOrDescendant(of: path) }
+                exclusions.append(path)
+            }
+        }
+        return BackupSelection(scope: .selected(roots), excludedRoots: exclusions)
     }
 }
 
 private struct RemoteSelectionRow: View {
     @Environment(AppModel.self) private var model
     let entry: RemoteEntry
+    @Binding var selection: BackupSelection
     let depth: Int
     @State private var children: [RemoteEntry] = []
     @State private var expanded = false
@@ -203,53 +310,24 @@ private struct RemoteSelectionRow: View {
         .padding(.vertical, 2)
         if expanded {
             if loading { ProgressView().controlSize(.small).padding(.leading, CGFloat((depth + 1) * 18)) }
-            ForEach(children) { child in RemoteSelectionRow(entry: child, depth: depth + 1) }
+            ForEach(children) { child in RemoteSelectionRow(entry: child, selection: $selection, depth: depth + 1) }
         }
     }
 
     private var selectionBinding: Binding<Bool> {
-        Binding(get: { isSelected }, set: { setSelected($0) })
+        Binding(get: { selection.includes(entry.path) }, set: { selected in
+            selection = BackupSelectionEditing.set(selected, path: entry.path, in: selection)
+        })
     }
 
     private var isBlockedByAncestorExclusion: Bool {
-        model.backupSelection.excludedRoots.contains { $0 != entry.path && entry.path.isEqualOrDescendant(of: $0) }
-    }
-
-    private var isSelected: Bool {
-        model.backupSelection.includes(entry.path)
-    }
-
-    private func setSelected(_ selected: Bool) {
-        var roots: [RemotePath] = []
-        var exclusions = model.backupSelection.excludedRoots
-        switch model.backupSelection.scope {
-        case .allSharedStorage:
-            if selected {
-                exclusions.removeAll { $0 == entry.path || entry.path.isEqualOrDescendant(of: $0) }
-            } else {
-                exclusions.removeAll { $0.isEqualOrDescendant(of: entry.path) }
-                exclusions.append(entry.path)
-            }
-            model.setBackupSelection(BackupSelection(scope: .allSharedStorage, excludedRoots: exclusions))
-            return
-        case .selected(let existing): roots = existing
-        }
-        if selected {
-            exclusions.removeAll { $0 == entry.path || entry.path.isEqualOrDescendant(of: $0) }
-            if !roots.contains(where: { entry.path.isEqualOrDescendant(of: $0) }) { roots.append(entry.path) }
-        } else {
-            roots.removeAll { $0.isEqualOrDescendant(of: entry.path) }
-            if roots.contains(where: { entry.path.isEqualOrDescendant(of: $0) }) {
-                exclusions.removeAll { $0.isEqualOrDescendant(of: entry.path) }
-                exclusions.append(entry.path)
-            }
-        }
-        model.setBackupSelection(BackupSelection(scope: .selected(roots), excludedRoots: exclusions))
+        selection.excludedRoots.contains { $0 != entry.path && entry.path.isEqualOrDescendant(of: $0) }
     }
 
     private func loadChildren() async {
         loading = true
-        children = await model.listRemoteChildren(of: entry.path).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        let result = await model.listRemoteChildren(of: entry.path)
+        children = result.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         loading = false
     }
 }

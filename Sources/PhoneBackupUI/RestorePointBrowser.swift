@@ -8,19 +8,15 @@ struct RestorePointBrowser: View {
     var body: some View {
         VStack(spacing: 0) {
             if let point = model.selectedRestorePoint {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Restore point contents").font(.title3.weight(.semibold))
-                        Text("\(point.createdAt.formatted(date: .long, time: .shortened)) · \(model.restoreEntries.count) stored entries")
-                            .foregroundStyle(.secondary).font(.callout)
-                    }
-                    Spacer()
+                AppPageHeader(title: "Restore Point", subtitle: "\(point.createdAt.formatted(date: .long, time: .shortened)) · \(model.restoreEntries.count) stored entries") {
+                    HStack {
                     Button("Restore to Phone…") { showingPhoneRestore = true }
                         .disabled(model.selectedRestoreRoots.isEmpty || model.isBusy)
                     Button("Export Selected…") { chooseExportFolder() }
                         .buttonStyle(.borderedProminent)
                         .disabled(model.selectedRestoreRoots.isEmpty || model.isBusy)
-                }.padding(18)
+                    }
+                }
                 Divider()
                 if model.restoreEntries.isEmpty {
                     ContentUnavailableView("This restore point has no stored entries", systemImage: "doc.questionmark")
@@ -58,8 +54,24 @@ private struct RestoreEntryRow: View {
     let entry: BackupEntry
     let allEntries: [BackupEntry]
     let depth: Int
+    @State private var isExpanded = false
 
     var body: some View {
+        Group {
+            if entry.kind == .directory && !children.isEmpty {
+                DisclosureGroup(isExpanded: $isExpanded) {
+                    ForEach(children) { child in RestoreEntryRow(entry: child, allEntries: allEntries, depth: depth + 1) }
+                } label: {
+                    rowContent
+                }
+            } else {
+                rowContent
+            }
+        }
+        .padding(.leading, CGFloat(depth * 12))
+    }
+
+    private var rowContent: some View {
         HStack(spacing: 8) {
             Toggle(isOn: Binding(get: { model.selectedRestoreRoots.contains(entry.path) }, set: { _ in model.toggleRestoreRoot(entry.path) })) {
                 Label(entry.path.name ?? entry.path.description, systemImage: entry.kind == .directory ? "folder" : "doc")
@@ -68,9 +80,7 @@ private struct RestoreEntryRow: View {
             Spacer()
             if entry.kind == .file { Text(UIFormatting.bytes(entry.size)).font(.caption).foregroundStyle(.secondary) }
         }
-        .padding(.leading, CGFloat(depth * 18))
-        .padding(.vertical, 2)
-        ForEach(children) { child in RestoreEntryRow(entry: child, allEntries: allEntries, depth: depth + 1) }
+        .padding(.vertical, 3)
     }
 
     private var children: [BackupEntry] {

@@ -2,7 +2,7 @@ import Foundation
 import Observation
 import PhoneBackupCore
 
-public enum AppSection: String, CaseIterable, Identifiable {
+public enum AppSection: String, CaseIterable, Hashable, Identifiable {
     case device = "Device"
     case files = "Files"
     case backups = "Backups"
@@ -296,6 +296,12 @@ public final class AppModel {
 
     public func cancelPlanning() {
         planningTask?.cancel()
+    }
+
+    public func cancelBackupReview() {
+        guard !isStartingOperation else { return }
+        isShowingBackupReview = false
+        backupPlan = nil
     }
 
     public func startBackup() async {

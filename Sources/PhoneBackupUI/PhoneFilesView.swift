@@ -5,7 +5,6 @@ import UniformTypeIdentifiers
 struct PhoneFilesView: View {
     @Environment(AppModel.self) private var model
     @Environment(RemoteBrowserModel.self) private var browser
-    @State private var showingOmissionConfirmation = false
     @State private var isDropTargeted = false
 
     var body: some View {
@@ -37,6 +36,9 @@ struct PhoneFilesView: View {
 
             if browser.isLoading && browser.entries.isEmpty {
                 ProgressView("Opening \(browser.currentDirectory.description)…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if browser.device?.state != .device {
+                ContentUnavailableView("Connect an Android device", systemImage: "cable.connector.slash", description: Text("Connect and authorize a phone to browse shared files."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = browser.errorMessage {
                 ContentUnavailableView {
                     Label("Folder unavailable", systemImage: "folder.badge.questionmark")
@@ -56,7 +58,12 @@ struct PhoneFilesView: View {
                             Image(systemName: entry.kind == .directory ? "folder.fill" : "doc")
                                 .foregroundStyle(entry.kind == .directory ? Color.accentColor : Color.secondary)
                             Text(entry.name).lineLimit(1)
-                                .onTapGesture(count: 2) { Task { await browser.open(entry) } }
+                                .onTapGesture(count: 2) { if entry.kind == .directory { Task { await browser.open(entry) } } }
+                                .contextMenu {
+                                    if entry.kind == .directory {
+                                        Button("Open Folder") { Task { await browser.open(entry) } }
+                                    }
+                                }
                                 .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
                                     guard entry.kind == .directory else { return false }
                                     return receiveFinderFiles(providers, destination: entry.path,
@@ -73,6 +80,11 @@ struct PhoneFilesView: View {
                         Text(entry.modifiedAt?.formatted(date: .abbreviated, time: .shortened) ?? "—")
                             .foregroundStyle(.secondary)
                     }
+                }
+                .onSubmit { openSelectedFolder() }
+                .onKeyPress(.return) {
+                    openSelectedFolder()
+                    return .handled
                 }
                 .onDrop(of: [UTType.fileURL], isTargeted: $isDropTargeted) { providers in
                     receiveFinderFiles(providers, destination: browser.currentDirectory,
@@ -103,24 +115,28 @@ struct PhoneFilesView: View {
                     .buttonStyle(.borderedProminent)
             }.padding(16)
             if model.isPlanningCopy { ProgressView("Preparing file copy plan…").padding(.horizontal, 16).padding(.bottom, 10) }
-            if model.isOperationRunning || model.copyResult != nil {
-                OperationStatusView(showingOmissionConfirmation: $showingOmissionConfirmation).padding(.horizontal, 16).padding(.bottom, 12)
-            }
         }
         .onDrop(of: [UTType.fileURL], isTargeted: $isDropTargeted) { providers in
             receiveFinderFiles(providers, destination: browser.currentDirectory,
                                expectedDirectory: browser.currentDirectory)
         }
-        .navigationTitle("Phone Files")
-        .confirmationDialog("Finish this backup with skipped paths?", isPresented: $showingOmissionConfirmation, titleVisibility: .visible) {
-            Button("Finish with omissions", role: .destructive) { Task { await model.finishBackupWithOmissions() } }
-            Button("Keep incomplete", role: .cancel) {}
-        } message: {
-            Text("The restore point will be marked incomplete and will list the paths that could not be saved.")
-        }
+        .navigationTitle("Files")
         .task {
-            if !browser.hasOpenedRoot { await browser.openRoot() }
+            await openSharedStorageWhenReady()
         }
+        .onChange(of: browser.device?.id) { _, _ in Task { await openSharedStorageWhenReady() } }
+        .onChange(of: browser.device?.state) { _, _ in Task { await openSharedStorageWhenReady() } }
+    }
+
+    private func openSelectedFolder() {
+        guard browser.selection.count == 1, let path = browser.selection.first,
+              let entry = browser.entries.first(where: { $0.path == path }), entry.kind == .directory else { return }
+        Task { await browser.open(entry) }
+    }
+
+    private func openSharedStorageWhenReady() async {
+        guard browser.device?.state == .device, !browser.hasOpenedRoot else { return }
+        await browser.openRoot()
     }
 
     private func choosePhoneExportDestination() {

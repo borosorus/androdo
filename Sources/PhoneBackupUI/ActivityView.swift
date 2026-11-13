@@ -5,16 +5,7 @@ struct ActivityView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Activity").font(.largeTitle.weight(.semibold))
-                    Text("This session’s operation summaries. Backup recovery is also available from the repository.")
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Clear Finished") { model.activityStore.clearFinished() }
-                    .disabled(model.activityStore.records.allSatisfy { $0.outcome == .running })
-            }.padding(24)
+            AppPageHeader(title: "Activity", subtitle: "Session summaries for backups, restores, and file copies.")
             Divider()
             if model.activityStore.records.isEmpty {
                 ContentUnavailableView("No activity yet", systemImage: "clock.arrow.circlepath", description: Text("Backups, restores, and file copies started in this session will appear here."))
@@ -45,6 +36,12 @@ struct ActivityView: View {
             }
         }
         .navigationTitle("Activity")
+        .toolbar {
+            ToolbarItem {
+                Button("Clear Finished") { model.activityStore.clearFinished() }
+                    .disabled(model.activityStore.records.allSatisfy { $0.outcome == .running })
+            }
+        }
     }
 
     private func symbol(for record: ActivityRecord) -> String {
