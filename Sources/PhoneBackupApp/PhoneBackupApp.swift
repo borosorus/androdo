@@ -16,6 +16,7 @@ struct PhoneBackupApp: App {
         WindowGroup(PhoneBackupCore.applicationName) {
             MainWindow()
                 .environment(model)
+                .environment(model.fileBrowser)
                 .frame(minWidth: 900, minHeight: 600)
         }
         .defaultSize(width: 1120, height: 760)

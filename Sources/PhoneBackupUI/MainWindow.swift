@@ -28,6 +28,11 @@ public struct MainWindow: View {
                         .accessibilityLabel("Select \(device.model ?? "Android device") \(device.id.serial)")
                     }
                     Button {
+                        Task { await model.browseFiles() }
+                    } label: {
+                        Label("Browse Files…", systemImage: "folder.badge.gearshape")
+                    }.disabled(model.isBusy || model.selectedDevice?.state != .device)
+                    Button {
                         Task { await model.refreshDevices() }
                     } label: {
                         Label("Refresh devices", systemImage: "arrow.clockwise")
@@ -43,6 +48,12 @@ public struct MainWindow: View {
                             .foregroundStyle(model.section == .backups ? Color.accentColor : Color.primary)
                     }
                     .buttonStyle(.plain)
+                    Button {
+                        model.section = .activity
+                    } label: {
+                        Label("Activity", systemImage: "clock.arrow.circlepath")
+                            .foregroundStyle(model.section == .activity ? Color.accentColor : Color.primary)
+                    }.buttonStyle(.plain)
                 }
             }
             .listStyle(.sidebar)
@@ -61,7 +72,9 @@ public struct MainWindow: View {
             Group {
                 switch model.section {
                 case .device: DeviceOverview()
+                case .files: PhoneFilesView()
                 case .backups: RestoreLibraryView()
+                case .activity: ActivityView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -85,6 +98,7 @@ public struct MainWindow: View {
         .sheet(isPresented: $model.isShowingExportReview) {
             LocalExportReviewSheet()
         }
+        .sheet(isPresented: $model.isShowingCopyReview) { CopyReviewSheet() }
         .alert("PhoneBackup", isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.clearStatus() } }
@@ -136,6 +150,17 @@ public enum NativeFilePanels {
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
         return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    @MainActor
+    public static func chooseFilesAndFolders(prompt: String, message: String? = nil) -> [URL]? {
+        let panel = NSOpenPanel()
+        panel.title = prompt
+        panel.message = message
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = true
+        return panel.runModal() == .OK ? panel.urls : nil
     }
 }
 

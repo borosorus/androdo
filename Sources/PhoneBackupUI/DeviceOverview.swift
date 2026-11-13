@@ -21,6 +21,9 @@ struct DeviceOverview: View {
                         Text(model.selectedDevice.map { "\($0.id.serial) · \($0.state == .device ? "Ready" : String(describing: $0.state))" } ?? "Connect by USB and authorize this Mac")
                             .foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    Button("Browse Files…") { Task { await model.browseFiles() } }
+                        .disabled(model.isBusy || model.selectedDevice?.state != .device)
                 }
 
                 if let message = model.statusMessage { MessageBanner(text: message) }

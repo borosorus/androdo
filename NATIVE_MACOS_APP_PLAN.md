@@ -26,7 +26,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 5 — Implement verification and safe local/phone restore. Commit: `feat(restore): add verified batch restore`. Review: approved after fixes for source-base validation, descriptor cleanup, and failure-path coverage.
 - [x] Step 6 — Implement direct file copy in both directions. Commit: `feat(transfer): add direct file copy`. Review: approved after fixes for destination parents, source ancestors, directory revalidation, cancellation, error reporting, repository containment, descriptor-relative traversal, and plan mapping consistency.
 - [x] Step 7 — Build the backup-first SwiftUI experience and offline restore browser. Commit: `feat(ui): add backup and local restore flows`. Review: approved, no blockers; follow-up findings addressed.
-- [ ] Step 8 — Build the phone file browser, Activity, and accessibility polish.
+- [x] Step 8 — Build the phone file browser, Activity, and accessibility polish. Commit: `feat(ui): add phone browser and operation activity`. Review: approved after fixes for device-bound restore browsing, Finder promise device binding, asynchronous safe-no-overwrite recovery, empty-folder drops, verified Activity counts, and preventing review dismissal during operation startup.
 - [ ] Step 9 — Complete packaging, CI, and end-to-end acceptance.
 
 ## Steps
@@ -134,6 +134,8 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 **Checks:** UI fixtures for browsing, both copy directions, original/alternate phone restore, conflict decisions, permission-denied paths, and Activity recovery actions.
 
 **Review:** Confirm directory browsing remains shallow, destructive actions are explicit, and path/serial details are not exposed in persistent diagnostics by default.
+
+**Complete:** Added lazy, immediate-child phone browsing, sorting and multi-selection, direct copy in both directions with explicit conflict review, Finder drops and outbound file promises, same-device restore to original or chosen folders, and bounded session-only Activity summaries. Activity omits paths, serial numbers, and raw transport errors; durable backup recovery remains in the repository. `swift test` passed (67 core and 9 UI-model tests); `git diff --check` passed. Reviewer approved after the fixes recorded above. AppModel orchestration lacks focused regression fixtures for device binding and asynchronous replacement replanning; Finder promise, nested sheet presentation, VoiceOver/keyboard navigation, appearance, and real-device flows still require manual acceptance in Step 9. No phone storage was read or changed for this step; `PhoneBackupTrial/` remains untracked and excluded.
 
 ### Step 9 — Packaging and end-to-end acceptance
 

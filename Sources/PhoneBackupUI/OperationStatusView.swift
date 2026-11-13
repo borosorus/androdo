@@ -79,7 +79,11 @@ struct OperationStatusView: View {
                     }
                 }
                 if let result = model.restoreResult {
-                    Text("Export result: \(result.items.filter { $0.state == .publishedAndVerified }.count) verified, \(result.items.filter { $0.state != .publishedAndVerified }.count) need attention.")
+                    Text("Restore result: \(result.items.filter { $0.state == .publishedAndVerified }.count) verified, \(result.items.filter { $0.state != .publishedAndVerified }.count) need attention.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                if let result = model.copyResult {
+                    Text("Copy result: \(result.items.filter { $0.state == .publishedAndVerified }.count) verified, \(result.items.filter { $0.state != .publishedAndVerified }.count) need attention.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 if !model.isOperationRunning && model.recoveryAttempt == nil && model.operationEvent?.phase.isTerminal == true {
@@ -91,13 +95,21 @@ struct OperationStatusView: View {
 
     private func phaseLabel(_ phase: OperationPhase) -> String {
         switch phase {
-        case .scanning: "Scanning selected folders…"
-        case .planning: "Preparing backup…"
-        case .transferring: "Copying files from device…"
-        case .verifying: "Verifying saved files…"
-        case .committing: "Finishing restore point…"
-        case .completed: "Backup completed and verified."
-        case .incomplete: "Backup incomplete. Choose a recovery action below."
+        case .scanning: "Scanning files…"
+        case .planning:
+            if model.operationTitle?.localizedCaseInsensitiveContains("restore") == true || model.operationTitle?.localizedCaseInsensitiveContains("export") == true { "Checking restore destinations…" }
+            else if model.operationTitle?.localizedCaseInsensitiveContains("copy") == true { "Planning file copy…" }
+            else { "Preparing backup…" }
+        case .transferring:
+            if model.operationTitle?.localizedCaseInsensitiveContains("copy") == true { "Copying files…" }
+            else if model.operationTitle?.localizedCaseInsensitiveContains("restore") == true { "Restoring files to Android…" }
+            else { "Copying files from device…" }
+        case .verifying: "Verifying files…"
+        case .committing:
+            if model.operationTitle?.localizedCaseInsensitiveContains("backup") == true { "Finishing restore point…" }
+            else { "Publishing verified files…" }
+        case .completed: "Operation completed and verified."
+        case .incomplete: "Operation incomplete. Review the outcome below."
         case .cancelled: "Operation cancelled."
         case .failed: "Operation failed. Review the message below."
         }

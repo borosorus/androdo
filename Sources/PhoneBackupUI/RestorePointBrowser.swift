@@ -3,6 +3,7 @@ import SwiftUI
 
 struct RestorePointBrowser: View {
     @Environment(AppModel.self) private var model
+    @State private var showingPhoneRestore = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -14,6 +15,8 @@ struct RestorePointBrowser: View {
                             .foregroundStyle(.secondary).font(.callout)
                     }
                     Spacer()
+                    Button("Restore to Phone…") { showingPhoneRestore = true }
+                        .disabled(model.selectedRestoreRoots.isEmpty || model.isBusy)
                     Button("Export Selected…") { chooseExportFolder() }
                         .buttonStyle(.borderedProminent)
                         .disabled(model.selectedRestoreRoots.isEmpty || model.isBusy)
@@ -33,6 +36,7 @@ struct RestorePointBrowser: View {
                 ContentUnavailableView("Select a restore point", systemImage: "clock.arrow.circlepath", description: Text("Restore points are immutable snapshots. Browse them without connecting the phone."))
             }
         }
+        .sheet(isPresented: $showingPhoneRestore) { PhoneRestoreDestinationSheet() }
     }
 
     private var rootEntries: [BackupEntry] {

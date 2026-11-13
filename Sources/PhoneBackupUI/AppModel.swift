@@ -4,7 +4,9 @@ import PhoneBackupCore
 
 public enum AppSection: String, CaseIterable, Identifiable {
     case device = "Device"
+    case files = "Files"
     case backups = "Backups"
+    case activity = "Activity"
 
     public var id: String { rawValue }
 }
@@ -12,12 +14,15 @@ public enum AppSection: String, CaseIterable, Identifiable {
 private enum ActiveOperationKind {
     case backup
     case restore
+    case copy
 }
 
 @MainActor
 @Observable
 public final class AppModel {
     public var section: AppSection = .device
+    public let fileBrowser: RemoteBrowserModel
+    public let activityStore: ActivityStore
     public private(set) var devices: [AndroidDevice] = []
     public private(set) var selectedDevice: AndroidDevice?
     public private(set) var backupLocation: URL?
@@ -30,6 +35,9 @@ public final class AppModel {
     public private(set) var backupSelection = BackupSelection()
     public private(set) var backupPlan: BackupPlan?
     public private(set) var restorePlan: RestorePlan?
+    public private(set) var copyPlan: CopyPlan?
+    public private(set) var copyResult: CopyBatchResult?
+    public private(set) var restorePlanTitle = "Review export"
     public private(set) var recoveryAttempt: BackupAttempt?
     public private(set) var pendingAttempts: [BackupAttempt] = []
     public private(set) var recoveryWarnings: [OperationWarning] = []
@@ -39,10 +47,12 @@ public final class AppModel {
     public private(set) var restoreResult: RestoreBatchResult?
     public private(set) var isPlanningBackup = false
     public private(set) var isPlanningExport = false
+    public private(set) var isPlanningCopy = false
     public private(set) var isStartingOperation = false
     public private(set) var isLoadingFolder = false
     public var isShowingBackupReview = false
     public var isShowingExportReview = false
+    public var isShowingCopyReview = false
     public private(set) var requiresRepositoryRecoveryConfirmation = false
     public private(set) var errorMessage: String?
     public private(set) var statusMessage: String?
@@ -53,20 +63,31 @@ public final class AppModel {
     @ObservationIgnored private var planningTask: Task<BackupPlan, Error>?
     @ObservationIgnored private var operationTask: Task<Void, Never>?
     @ObservationIgnored private var activeOperationKind: ActiveOperationKind?
+    @ObservationIgnored private var activeActivityID: UUID?
+    @ObservationIgnored private var copyScopedURLs: [URL] = []
+    @ObservationIgnored private var activeCopyRequest: CopyRequest?
+    @ObservationIgnored private var activeRestoreRequest: RestoreRequest?
     @ObservationIgnored private var contextGeneration = 0
 
     public var isOperationRunning: Bool { operationID != nil }
-    public var isBusy: Bool { isPlanningBackup || isPlanningExport || isStartingOperation || isOperationRunning }
+    public var isBusy: Bool { isPlanningBackup || isPlanningExport || isPlanningCopy || isStartingOperation || isOperationRunning }
     public var hasADB: Bool { services.deviceTransport != nil }
     public var selectedRepository: BackupRepositoryInfo? {
         repositories.first(where: { $0.id == selectedRepositoryID })
     }
+    public var restoreTargetIsPhone: Bool {
+        guard let target = restorePlan?.request.target else { return false }
+        return isPhoneRestoreTarget(target)
+    }
 
     public init(services: AppServices = .live(), preferences: AppPreferences = .standard,
-                locationAccess: BackupLocationAccess = BackupLocationAccess(), loadOnStart: Bool = true) {
+                locationAccess: BackupLocationAccess = BackupLocationAccess(),
+                activityStore: ActivityStore = ActivityStore(), loadOnStart: Bool = true) {
         self.services = services
         self.preferences = preferences
         self.locationAccess = locationAccess
+        self.fileBrowser = RemoteBrowserModel(remote: services.remoteAccess)
+        self.activityStore = activityStore
         if loadOnStart {
             Task {
                 await loadSavedDestination()
@@ -78,6 +99,8 @@ public final class AppModel {
     public func refreshDevices() async {
         guard let transport = services.deviceTransport else {
             devices = []
+            selectedDevice = nil
+            fileBrowser.setDevice(nil)
             if services.adbExecutable == nil { statusMessage = "Android Debug Bridge was not found." }
             return
         }
@@ -86,15 +109,18 @@ public final class AppModel {
             devices = found
             if let current = selectedDevice, let refreshed = found.first(where: { $0.id == current.id }) {
                 selectedDevice = refreshed
+                fileBrowser.setDevice(refreshed)
             } else {
                 selectedDevice = found.first(where: { $0.state == .device }) ?? found.first
                 if let selectedDevice { loadSavedSelection(for: selectedDevice.id) }
+                fileBrowser.setDevice(selectedDevice)
             }
             statusMessage = found.isEmpty ? "No Android device is connected." : nil
             errorMessage = nil
         } catch {
             devices = []
             selectedDevice = nil
+            fileBrowser.setDevice(nil)
             errorMessage = UserFacingError.message(for: error)
         }
     }
@@ -103,6 +129,7 @@ public final class AppModel {
         guard !isBusy else { return }
         contextGeneration += 1
         selectedDevice = device
+        fileBrowser.setDevice(device)
         loadSavedSelection(for: device.id)
         backupPlan = nil
         isShowingBackupReview = false
@@ -189,7 +216,25 @@ public final class AppModel {
         guard !isBusy else { return }
         preferences.adbExecutablePath = url.standardizedFileURL.path
         services = services.usingADB(at: url)
+        fileBrowser.updateRemote(services.remoteAccess)
         Task { await refreshDevices() }
+    }
+
+    public func browseFiles() async {
+        guard let selectedDevice else {
+            errorMessage = "Connect and authorize an Android device before browsing files."
+            return
+        }
+        fileBrowser.setDevice(selectedDevice)
+        section = .files
+        await fileBrowser.openRoot()
+    }
+
+    public func makeRemoteBrowser(for deviceID: DeviceID) -> RemoteBrowserModel? {
+        guard let device = devices.first(where: { $0.id == deviceID && $0.state == .device }) else { return nil }
+        let browser = RemoteBrowserModel(remote: services.remoteAccess)
+        browser.setDevice(device)
+        return browser
     }
 
     public func reviewBackup() async {
@@ -250,6 +295,9 @@ public final class AppModel {
             let operation = try await engine.startBackup(using: plan.id, omissions: .requireComplete)
             isShowingBackupReview = false
             backupPlan = nil
+            restoreResult = nil
+            copyResult = nil
+            statusMessage = nil
             monitorBackup(operation, engine: engine, repository: plan.repository)
         } catch {
             errorMessage = UserFacingError.message(for: error)
@@ -304,7 +352,149 @@ public final class AppModel {
         switch activeOperationKind {
         case .backup: if let backupEngine = services.backupEngine { await backupEngine.cancel(operationID) }
         case .restore: await services.restoreEngine.cancel(operationID)
+        case .copy: if let copyEngine = services.copyEngine { await copyEngine.cancel(operationID) }
         case nil: break
+        }
+    }
+
+    public func planPhoneToMacCopy(roots: [RemotePath], destination: URL) async {
+        guard !isBusy, let device = selectedDevice, device.state == .device,
+              let engine = services.copyEngine else {
+            errorMessage = "Connect and authorize an Android device before copying files."
+            return
+        }
+        beginCopyAccess([destination])
+        await planCopy(.phoneToMac(device: device.id, roots: roots, destination: destination), using: engine)
+    }
+
+    public func planMacToPhoneCopy(sources: [URL], destination: RemotePath,
+                                   replacingMissingTargets: Set<RemotePath> = []) async {
+        guard !isBusy, let device = selectedDevice, device.state == .device,
+              let engine = services.copyEngine else {
+            errorMessage = "Connect and authorize an Android device before copying files."
+            return
+        }
+        beginCopyAccess(sources)
+        await planCopy(.macToPhone(device: device.id, sources: sources, destination: destination,
+                                   replaceMissingTargets: replacingMissingTargets), using: engine)
+    }
+
+    private func planCopy(_ request: CopyRequest, using engine: any CopyEngine) async {
+        isPlanningCopy = true
+        errorMessage = nil
+        statusMessage = nil
+        let generation = contextGeneration
+        defer { isPlanningCopy = false }
+        do {
+            let plan = try await engine.planCopy(request)
+            guard generation == contextGeneration else { endCopyAccess(); return }
+            copyPlan = plan
+            isShowingCopyReview = true
+        } catch {
+            endCopyAccess()
+            errorMessage = UserFacingError.message(for: error)
+        }
+    }
+
+    public func startCopy(replacing conflicts: Set<UUID>) async {
+        guard !isBusy, let plan = copyPlan, let engine = services.copyEngine else { return }
+        isStartingOperation = true
+        defer { isStartingOperation = false }
+        do {
+            activeCopyRequest = plan.request
+            let operation = try await engine.startCopy(plan.id, replacing: conflicts)
+            isShowingCopyReview = false
+            copyPlan = nil
+            copyResult = nil
+            restoreResult = nil
+            statusMessage = nil
+            monitorCopy(operation, engine: engine)
+        } catch {
+            if case EngineError.safeNoOverwriteUnavailable(let path) = error {
+                if await replanCopyWithExplicitMissingTarget(plan.request, path: path, engine: engine) {
+                    activeCopyRequest = nil
+                    return
+                } else {
+                    endCopyAccess()
+                    copyPlan = nil
+                    isShowingCopyReview = false
+                }
+            } else {
+                endCopyAccess()
+                copyPlan = nil
+                isShowingCopyReview = false
+                errorMessage = UserFacingError.message(for: error)
+            }
+            activeCopyRequest = nil
+        }
+    }
+
+    private func replanCopyWithExplicitMissingTarget(_ request: CopyRequest, path: RemotePath,
+                                                       engine: any CopyEngine) async -> Bool {
+        guard case .macToPhone(let device, let sources, let destination, _) = request else { return false }
+        isPlanningCopy = true
+        defer { isPlanningCopy = false }
+        do {
+            let explicitPlan = try await engine.planCopy(.macToPhone(device: device, sources: sources,
+                                                                     destination: destination,
+                                                                     replaceMissingTargets: [path]))
+            copyPlan = explicitPlan
+            copyResult = nil
+            isShowingCopyReview = true
+            errorMessage = nil
+            statusMessage = "Android cannot safely create this file without replacement. Review the exact missing path and explicitly approve the replacement before continuing."
+            return true
+        } catch {
+            errorMessage = UserFacingError.message(for: error)
+            return false
+        }
+    }
+
+    public func cancelCopyReview() {
+        isShowingCopyReview = false
+        copyPlan = nil
+        endCopyAccess()
+    }
+
+    public func writeRemoteFilePromise(_ entry: RemoteEntry, from deviceID: DeviceID, to destination: URL) async throws {
+        guard !isBusy else { throw EngineError.transport("Another operation is already running") }
+        guard let device = devices.first(where: { $0.id == deviceID }) else {
+            throw EngineError.deviceUnavailable(deviceID)
+        }
+        guard device.state == .device else { throw EngineError.deviceUnavailable(device.id) }
+        guard let engine = services.copyEngine else { throw EngineError.adbUnavailable("Copy engine unavailable") }
+        isPlanningCopy = true
+        let plan: CopyPlan
+        do {
+            plan = try await engine.planCopy(.phoneToMac(device: device.id, roots: [entry.path],
+                                                        destination: destination.deletingLastPathComponent()))
+            isPlanningCopy = false
+        } catch {
+            isPlanningCopy = false
+            throw error
+        }
+        guard plan.conflicts.isEmpty,
+              plan.mappings.contains(where: { $0.destination == .local(destination) }) else {
+            throw EngineError.destinationConflict(TransferConflict(destination: destination.path, kind: .fileExists))
+        }
+        isStartingOperation = true
+        let operation: OperationID
+        do {
+            operation = try await engine.startCopy(plan.id, replacing: [])
+            isStartingOperation = false
+        } catch {
+            isStartingOperation = false
+            throw error
+        }
+        monitorCopy(operation, engine: engine)
+        let stream = await engine.events(for: operation)
+        var terminal: OperationEvent?
+        for await event in stream where event.phase.isTerminal { terminal = event; break }
+        guard terminal?.phase == .completed,
+              let result = await engine.result(for: operation),
+              !result.items.isEmpty,
+              result.items.allSatisfy({ $0.state == .publishedAndVerified }) else {
+            throw terminal?.failure ?? EngineError.transport("The promised file was not fully verified")
         }
     }
 
@@ -361,19 +551,45 @@ public final class AppModel {
             errorMessage = "Select one or more files or folders to export."
             return
         }
+        let request = RestoreRequest(repository: repository, point: point.id,
+                                     selectedRoots: Array(selectedRestoreRoots),
+                                     target: .localFolder(folder, sourceBase: sourceBase))
+        await planRestore(request, title: "Review export")
+    }
+
+    public func planPhoneRestore(to folder: RemotePath?) async {
+        guard !isBusy, let repositoryInfo = selectedRepository,
+              let point = selectedRestorePoint, !selectedRestoreRoots.isEmpty else { return }
+        guard devices.contains(where: { $0.id == repositoryInfo.deviceID && $0.state == .device }) else {
+            errorMessage = "Connect and authorize the Android device that owns this backup before restoring to it."
+            return
+        }
+        let selectedEntries = selectedRestoreRoots.compactMap { root in restoreEntries.first { $0.path == root } }
+        guard selectedEntries.count == selectedRestoreRoots.count,
+              let sourceBase = ExportMapping.commonSourceBase(for: selectedEntries) else {
+            errorMessage = "Select one or more files or folders to restore."
+            return
+        }
+        let target: RestoreTarget = folder.map { .phoneFolder($0, sourceBase: sourceBase) } ?? .originalPhonePaths
+        let request = RestoreRequest(repository: repositoryInfo.id, point: point.id,
+                                     selectedRoots: Array(selectedRestoreRoots), target: target)
+        let title = folder.map { "Review phone restore to \($0.description)" } ?? "Review phone restore"
+        await planRestore(request, title: title)
+    }
+
+    private func planRestore(_ request: RestoreRequest, title: String) async {
+        let generation = contextGeneration
+        isPlanningExport = true
+        statusMessage = nil
+        defer { isPlanningExport = false }
         do {
-            isPlanningExport = true
-            defer { isPlanningExport = false }
-            let request = RestoreRequest(repository: repository, point: point.id,
-                                         selectedRoots: Array(selectedRestoreRoots),
-                                         target: .localFolder(folder, sourceBase: sourceBase))
-            let generation = contextGeneration
             let plan = try await services.restoreEngine.planRestore(request)
             guard generation == contextGeneration,
-                  selectedRepositoryID == repository,
-                  selectedRestorePoint?.id == point.id,
+                  selectedRepositoryID == request.repository,
+                  selectedRestorePoint?.id == request.point,
                   selectedRestoreRoots == Set(request.selectedRoots) else { return }
             restorePlan = plan
+            restorePlanTitle = title
             isShowingExportReview = true
             errorMessage = nil
         } catch {
@@ -382,16 +598,59 @@ public final class AppModel {
     }
 
     public func startLocalExport(replacing conflicts: Set<UUID>) async {
+        await startRestore(replacing: conflicts)
+    }
+
+    public func startRestore(replacing conflicts: Set<UUID>) async {
         guard !isBusy, let plan = restorePlan else { return }
         isStartingOperation = true
         defer { isStartingOperation = false }
         do {
-            isShowingExportReview = false
             restoreResult = nil
+            activeRestoreRequest = plan.request
             let operation = try await services.restoreEngine.startRestore(plan.id, replacing: conflicts)
-            monitorRestore(operation)
+            isShowingExportReview = false
+            restorePlan = nil
+            copyResult = nil
+            statusMessage = nil
+            monitorRestore(operation, title: restorePlanTitle.replacingOccurrences(of: "Review ", with: ""))
+        } catch {
+            if case EngineError.safeNoOverwriteUnavailable(let path) = error,
+               await replanRestoreWithExplicitMissingTarget(plan.request, path: path) {
+                activeRestoreRequest = nil
+                return
+            } else {
+                activeRestoreRequest = nil
+                restorePlan = nil
+                isShowingExportReview = false
+                errorMessage = UserFacingError.message(for: error)
+            }
+        }
+    }
+
+    private func isPhoneRestoreTarget(_ target: RestoreTarget) -> Bool {
+        switch target {
+        case .originalPhonePaths, .phoneFolder: true
+        case .localFolder: false
+        }
+    }
+
+    private func replanRestoreWithExplicitMissingTarget(_ request: RestoreRequest, path: RemotePath) async -> Bool {
+        guard isPhoneRestoreTarget(request.target) else { return false }
+        isPlanningExport = true
+        defer { isPlanningExport = false }
+        do {
+            let explicitRequest = RestoreRequest(repository: request.repository, point: request.point,
+                                                 selectedRoots: request.selectedRoots, target: request.target,
+                                                 replaceMissingPhoneTargets: [path])
+            restorePlan = try await services.restoreEngine.planRestore(explicitRequest)
+            restorePlanTitle = "Review explicit replacement for \(path.description)"
+            isShowingExportReview = true
+            statusMessage = "Android cannot safely publish without overwrite. This new plan targets only the exact missing path shown; approve its replacement below."
+            return true
         } catch {
             errorMessage = UserFacingError.message(for: error)
+            return false
         }
     }
 
@@ -405,10 +664,21 @@ public final class AppModel {
         errorMessage = nil
         operationEvent = nil
         restoreResult = nil
+        copyResult = nil
     }
 
     public func reportError(_ message: String) {
         errorMessage = message
+    }
+
+    private func beginCopyAccess(_ urls: [URL]) {
+        endCopyAccess()
+        copyScopedURLs = urls.map(\.standardizedFileURL).filter { $0.startAccessingSecurityScopedResource() }
+    }
+
+    private func endCopyAccess() {
+        copyScopedURLs.forEach { $0.stopAccessingSecurityScopedResource() }
+        copyScopedURLs = []
     }
 
     private func loadSavedDestination() async {
@@ -507,6 +777,7 @@ public final class AppModel {
     private func monitorBackup(_ operation: OperationID, engine: any BackupEngine, repository: RepositoryID) {
         operationID = operation
         activeOperationKind = .backup
+        activeActivityID = activityStore.begin(.backup)
         operationTitle = "Backing up"
         operationEvent = nil
         operationTask = Task { [weak self] in
@@ -515,6 +786,7 @@ public final class AppModel {
             var terminal: OperationEvent?
             for await event in stream {
                 self.operationEvent = event
+                if let id = self.activeActivityID { self.activityStore.update(id, event: event) }
                 if event.phase.isTerminal { terminal = event; break }
             }
             await self.finishBackupOperation(operation, engine: engine, repository: repository, terminal: terminal)
@@ -541,14 +813,20 @@ public final class AppModel {
             statusMessage = "Backup failed. The previous restore point remains available."
         }
         await loadPendingAttempts(for: repository)
+        if let id = activeActivityID {
+            let verified = terminal?.phase == .completed ? terminal?.progress.completedItems ?? 0 : 0
+            activityStore.setVerifiedItems(verified, for: id)
+        }
+        activeActivityID = nil
         if operationID == operation { operationID = nil; operationTitle = nil; activeOperationKind = nil }
         operationTask = nil
     }
 
-    private func monitorRestore(_ operation: OperationID) {
+    private func monitorRestore(_ operation: OperationID, title: String = "Exporting restore point") {
         operationID = operation
         activeOperationKind = .restore
-        operationTitle = "Exporting restore point"
+        activeActivityID = activityStore.begin(.restore)
+        operationTitle = title
         operationEvent = nil
         operationTask = Task { [weak self] in
             guard let self else { return }
@@ -556,11 +834,58 @@ public final class AppModel {
             var terminal: OperationEvent?
             for await event in stream {
                 self.operationEvent = event
+                if let id = self.activeActivityID { self.activityStore.update(id, event: event) }
                 if event.phase.isTerminal { terminal = event; break }
             }
             self.restoreResult = await self.services.restoreEngine.result(for: operation)
-            if terminal?.phase == .completed { self.statusMessage = "Export completed and verified." }
+            if let id = self.activeActivityID {
+                self.activityStore.setVerifiedItems(self.restoreResult?.items.filter { $0.state == .publishedAndVerified }.count ?? 0, for: id)
+            }
+            if terminal?.phase == .completed { self.statusMessage = "Restore completed and verified." }
+            else if terminal?.phase == .incomplete { self.statusMessage = "Restore finished with items that need attention." }
+            if let failure = terminal?.failure, case EngineError.safeNoOverwriteUnavailable(let path) = failure,
+               let request = self.activeRestoreRequest {
+                _ = await self.replanRestoreWithExplicitMissingTarget(request, path: path)
+                self.restoreResult = nil
+            }
+            self.activeRestoreRequest = nil
             if self.operationID == operation { self.operationID = nil; self.operationTitle = nil; self.activeOperationKind = nil }
+            self.activeActivityID = nil
+            self.operationTask = nil
+        }
+    }
+
+    private func monitorCopy(_ operation: OperationID, engine: any CopyEngine) {
+        operationID = operation
+        activeOperationKind = .copy
+        activeActivityID = activityStore.begin(.copy)
+        operationTitle = "Copying files"
+        operationEvent = nil
+        operationTask = Task { [weak self] in
+            guard let self else { return }
+            let stream = await engine.events(for: operation)
+            var terminal: OperationEvent?
+            for await event in stream {
+                self.operationEvent = event
+                if let id = self.activeActivityID { self.activityStore.update(id, event: event) }
+                if event.phase.isTerminal { terminal = event; break }
+            }
+            self.copyResult = await engine.result(for: operation)
+            if let id = self.activeActivityID {
+                self.activityStore.setVerifiedItems(self.copyResult?.items.filter { $0.state == .publishedAndVerified }.count ?? 0, for: id)
+            }
+            if terminal?.phase == .completed { self.statusMessage = "Files copied and verified." }
+            else if terminal?.phase == .incomplete { self.statusMessage = "Copy finished with items that need attention." }
+            var presentedReplacementReview = false
+            if let failure = terminal?.failure, case EngineError.safeNoOverwriteUnavailable(let path) = failure,
+               let request = self.activeCopyRequest {
+                presentedReplacementReview = await self.replanCopyWithExplicitMissingTarget(request, path: path, engine: engine)
+                if presentedReplacementReview { self.copyResult = nil }
+            }
+            self.activeCopyRequest = nil
+            if self.operationID == operation { self.operationID = nil; self.operationTitle = nil; self.activeOperationKind = nil }
+            if !presentedReplacementReview { self.endCopyAccess() }
+            self.activeActivityID = nil
             self.operationTask = nil
         }
     }
