@@ -122,11 +122,23 @@ struct DeviceOverview: View {
 
     private var primaryActionTitle: String {
         switch readiness {
-        case .connection: "Set Up Connection…"
+        case .connection: connectionActionTitle
         case .location: "Choose Backup Folder…"
         case .selection: "Choose Files…"
         case .ready: "Back Up…"
         case .busy: "Preparing…"
+        }
+    }
+
+    private var connectionActionTitle: String {
+        guard model.hasADB else { return "Set Up Connection…" }
+        guard let state = model.selectedDevice?.state else { return "Connect Your Phone…" }
+        switch state {
+        case .unauthorized: "Authorize This Mac…"
+        case .offline: "Reconnect Phone…"
+        case .device: "Connection Setup…"
+        case .bootloader, .recovery, .sideload: "Restart Phone Normally…"
+        case .unknown: "Check Connection…"
         }
     }
 

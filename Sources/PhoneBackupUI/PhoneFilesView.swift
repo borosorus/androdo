@@ -6,6 +6,9 @@ struct PhoneFilesView: View {
     @Environment(AppModel.self) private var model
     @Environment(RemoteBrowserModel.self) private var browser
     @State private var isDropTargeted = false
+    @State private var showingADBSetup = false
+
+    private let developerOptionsURL = URL(string: "https://developer.android.com/studio/debug/dev-options#enable")!
 
     var body: some View {
         @Bindable var browser = browser
@@ -21,7 +24,16 @@ struct PhoneFilesView: View {
             if browser.isLoading {
                 ProgressView("Opening \(browser.displayedDirectory.description)…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if browser.device?.state != .device {
-                ContentUnavailableView("Connect an Android device", systemImage: "cable.connector.slash", description: Text("Connect and authorize a phone to browse shared files."))
+                ContentUnavailableView {
+                    Label("Connect an Android device", systemImage: "cable.connector.slash")
+                } description: {
+                    Text(connectionUnavailableDescription)
+                } actions: {
+                    Button(model.hasADB ? "Connection Setup…" : "Set Up Connection…") {
+                        showingADBSetup = true
+                    }
+                    Link("How to enable Developer options…", destination: developerOptionsURL)
+                }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = browser.errorMessage {
                 ContentUnavailableView {
@@ -116,6 +128,7 @@ struct PhoneFilesView: View {
         }
         .onChange(of: browser.device?.id) { _, _ in Task { await openSharedStorageWhenReady() } }
         .onChange(of: browser.device?.state) { _, _ in Task { await openSharedStorageWhenReady() } }
+        .sheet(isPresented: $showingADBSetup) { ADBSetupView() }
     }
 
     private func selectedFolder(in paths: Set<RemotePath>) -> RemoteEntry? {
@@ -130,6 +143,18 @@ struct PhoneFilesView: View {
     private func openSharedStorageWhenReady() async {
         guard browser.device?.state == .device, !browser.hasOpenedRoot else { return }
         await browser.openRoot()
+    }
+
+    private var connectionUnavailableDescription: String {
+        guard model.hasADB else { return "Set up ADB on this Mac, then prepare and authorize your phone to browse shared files." }
+        guard let state = browser.device?.state else { return "Connect your phone with a data-capable USB cable, unlock it, and choose Check Again in Connection Setup." }
+        switch state {
+        case .device: "This phone is ready. Open shared storage to browse files."
+        case .unauthorized: "Unlock your phone and approve the “Allow USB debugging?” prompt for this Mac."
+        case .offline: "Android lists this phone as offline. Reconnect the cable and unlock the phone."
+        case .bootloader, .recovery, .sideload: "Restart Android normally, then choose Check Again in Connection Setup."
+        case .unknown: "Check the USB debugging setup on your phone, then choose Check Again."
+        }
     }
 
     private func choosePhoneExportDestination() {

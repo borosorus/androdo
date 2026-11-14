@@ -20,6 +20,17 @@ checks, copied into the app, or committed.
 - [ ] Open Connection Setup and verify the existing ADB path is shown when
       found. Discovery checks only known SDK/Homebrew/managed paths and absolute
       `PATH` entries; it does not recursively search the Mac.
+- [ ] In Connection Setup, review the numbered Developer options, USB debugging,
+      USB cable, and trust steps. Follow the Google help links and confirm that
+      device-specific settings paths are described as variable.
+- [ ] Verify the guide explains why ADB needs debugging and that the Mac should
+      be trusted, without implying Android restricts ADB itself to selected files.
+- [ ] Check the guide’s status copy with no phone, an unauthorized phone, an
+      offline phone, and an authorized phone. Opening the guide must not run
+      device discovery or browse folders.
+- [ ] In File Explorer with no authorized phone, verify Connection Setup opens
+      the same in-app guide and the direct Developer options link opens Google’s
+      documentation.
 - [ ] Verify **Install Platform Tools** stays disabled until the unchecked
       Google SDK terms agreement is selected, and that the managed destination
       is visible before starting.
@@ -72,6 +83,8 @@ and Mac dependent; do not claim them tested until observed.
 - [ ] Main actions, review sheets, Settings, and file actions use consistent larger native controls.
 - [ ] With no ADB configured, Overview and the sidebar open the same guided setup.
 - [ ] Setup links to Google's Platform Tools/USB-debugging documentation and can copy the Homebrew command.
+- [ ] Setup, Overview’s contextual connection action, and disconnected File Explorer state give a direct route to the phone guide.
+- [ ] Inspect the guide in light/dark appearance and compact sheet size; its numbered steps, external links, Escape dismissal, keyboard focus, and VoiceOver names remain clear.
 - [ ] The app-owned Platform Tools copy is stored under `~/Library/Application Support/Androdo/Platform Tools`; custom locations work through Locate ADB.
 - [ ] After installing outside the app, Check Again discovers ADB; after an in-app install it waits for the same explicit Check Again action.
 - [ ] Discovery failure remains visible inside the guide, even without the main window.

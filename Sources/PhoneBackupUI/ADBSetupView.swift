@@ -15,8 +15,8 @@ struct ADBSetupView: View {
     private let downloadPage = URL(string: "https://developer.android.com/tools/releases/platform-tools")!
 
     var body: some View {
-        ReviewSheetLayout(title: "Connect your Android", subtitle: "Choose how Androdo should find ADB on this Mac.",
-                          minimumWidth: 620, minimumHeight: 630) {
+        ReviewSheetLayout(title: "Connect your Android", subtitle: "Set up this Mac, then prepare and authorize your phone.",
+                          minimumWidth: 620, minimumHeight: 580) {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .top, spacing: 14) {
                     Image(systemName: "cable.connector").font(.title).foregroundStyle(AppIdentity.teal)
@@ -49,63 +49,19 @@ struct ADBSetupView: View {
                         .font(.callout.weight(.medium)).foregroundStyle(.secondary)
                 }
 
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Install a local copy").font(.headline)
-                        Spacer()
-                        Text("RECOMMENDED").font(.caption2.weight(.bold)).tracking(0.5)
-                            .foregroundStyle(AppIdentity.copper)
-                    }
-                    Text("Androdo downloads the latest macOS Platform Tools directly from Google, verifies the archive and ADB executable, then stores its own copy here:")
-                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    Text(managedInstallPath).font(.caption.monospaced()).textSelection(.enabled)
-                        .foregroundStyle(.secondary)
-                    Text("Your Android Studio, Homebrew, or other ADB installation is not changed. Androdo won’t look for your phone until you choose Check Again.")
-                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-
-                    Toggle(isOn: $acceptsGoogleTerms) {
-                        Text("I agree to Google’s Android SDK License Agreement")
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Link("Read Google’s terms and Platform Tools details…", destination: downloadPage)
-                        .font(.callout)
-
-                    Button {
-                        let acceptedTerms = acceptsGoogleTerms
-                        acceptsGoogleTerms = false
-                        dismiss()
-                        if model.beginADBInstallation(acceptingGoogleTerms: acceptedTerms) {
-                            openWindow(id: OperationProgressScene.windowID)
-                        }
-                    } label: {
-                        Label(model.isUsingManagedADB ? "Reinstall Platform Tools" : "Install Platform Tools", systemImage: "arrow.down.to.line.circle")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue).controlSize(.large)
-                    .disabled(!acceptsGoogleTerms || model.isBusy)
-                    .accessibilityHint(acceptsGoogleTerms ? "Downloads Platform Tools from Google and shows progress." : "Agree to Google’s SDK terms first to enable the local install.")
-
-                    Link("Download and install manually instead…", destination: downloadPage)
-                        .font(.callout)
-                    DisclosureGroup("Already use Homebrew?") {
-                        VStack(alignment: .leading, spacing: 9) {
-                            Text("Run this command in Terminal, then choose Check Again.").foregroundStyle(.secondary)
-                            Text(homebrewCommand).font(.callout.monospaced()).textSelection(.enabled)
-                            Button(copiedCommand ? "Command Copied" : "Copy Command") {
-                                NSPasteboard.general.clearContents()
-                                copiedCommand = NSPasteboard.general.setString(homebrewCommand, forType: .string)
-                            }
-                        }.padding(.top, 8)
-                    }
+                if !model.hasADB {
+                    platformToolsSetup
                 }
 
-                Divider()
-                VStack(alignment: .leading, spacing: 9) {
-                    Text("Connect and authorize your phone").font(.headline)
-                    Text("Enable Developer options and USB debugging, connect by USB, unlock the phone, and accept its “Allow USB debugging?” prompt for this Mac.")
-                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    Link("USB debugging help…", destination: URL(string: "https://developer.android.com/studio/debug/dev-options#enable")!)
+                AndroidConnectionGuide(hasADB: model.hasADB, deviceState: model.selectedDevice?.state)
+
+                if model.hasADB {
+                    DisclosureGroup("Install or switch Platform Tools") {
+                        platformToolsSetup.padding(.top, 10)
+                    }
+                    .font(.callout.weight(.medium))
                 }
+
                 Text("You can browse saved backups without connecting a phone.")
                     .font(.callout).foregroundStyle(.secondary)
             }
@@ -134,5 +90,57 @@ struct ADBSetupView: View {
         let path = GoogleADBPlatformToolsInstaller.defaultRootDirectory.path
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return path.hasPrefix(home) ? "~" + String(path.dropFirst(home.count)) : path
+    }
+
+    private var platformToolsSetup: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Install a local copy").font(.headline)
+                Spacer()
+                Text("RECOMMENDED").font(.caption2.weight(.bold)).tracking(0.5)
+                    .foregroundStyle(AppIdentity.copper)
+            }
+            Text("Androdo downloads the latest macOS Platform Tools directly from Google, verifies the archive and ADB executable, then stores its own copy here:")
+                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(managedInstallPath).font(.caption.monospaced()).textSelection(.enabled)
+                .foregroundStyle(.secondary)
+            Text("Your Android Studio, Homebrew, or other ADB installation is not changed. Androdo won’t look for your phone until you choose Check Again.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+
+            Toggle(isOn: $acceptsGoogleTerms) {
+                Text("I agree to Google’s Android SDK License Agreement")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Link("Read Google’s terms and Platform Tools details…", destination: downloadPage)
+                .font(.callout)
+
+            Button {
+                let acceptedTerms = acceptsGoogleTerms
+                acceptsGoogleTerms = false
+                dismiss()
+                if model.beginADBInstallation(acceptingGoogleTerms: acceptedTerms) {
+                    openWindow(id: OperationProgressScene.windowID)
+                }
+            } label: {
+                Label(model.isUsingManagedADB ? "Reinstall Platform Tools" : "Install Platform Tools", systemImage: "arrow.down.to.line.circle")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue).controlSize(.large)
+            .disabled(!acceptsGoogleTerms || model.isBusy)
+            .accessibilityHint(acceptsGoogleTerms ? "Downloads Platform Tools from Google and shows progress." : "Agree to Google’s SDK terms first to enable the local install.")
+
+            Link("Download and install manually instead…", destination: downloadPage)
+                .font(.callout)
+            DisclosureGroup("Already use Homebrew?") {
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("Run this command in Terminal, then choose Check Again.").foregroundStyle(.secondary)
+                    Text(homebrewCommand).font(.callout.monospaced()).textSelection(.enabled)
+                    Button(copiedCommand ? "Command Copied" : "Copy Command") {
+                        NSPasteboard.general.clearContents()
+                        copiedCommand = NSPasteboard.general.setString(homebrewCommand, forType: .string)
+                    }
+                }.padding(.top, 8)
+            }
+        }
     }
 }

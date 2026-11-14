@@ -69,10 +69,17 @@ without restarting the app. For a custom location, use **Locate ADB…**. The
 guide remains available under **Androdo → Settings… → Connection Setup…**. It
 does not run Homebrew. The app remembers a selected executable's path.
 
-Enable Developer options and USB debugging on the phone, connect it by USB,
-and accept its authorization prompt for this Mac. Discovery and Check Again
-only enumerate connected devices; folder contents are listed after you open
-a folder. Saved backups remain accessible offline.
+Connection Setup includes a numbered phone guide for enabling Developer
+options, turning on USB debugging, connecting with a data-capable cable, and
+authorizing this Mac. Android settings paths vary by manufacturer; the guide
+links to Google’s [Developer options instructions](https://developer.android.com/studio/debug/dev-options#enable)
+and [ADB authorization help](https://developer.android.com/tools/adb#Enabling).
+Authorize only a computer you trust: USB debugging gives it an ADB command
+connection to Android. Discovery and Check Again enumerate connected devices.
+If File Explorer is already selected when a phone connects, Androdo opens the
+shared-storage root and lists its immediate entries; it does not recurse into
+other folders. Other contents appear as you navigate or choose a backup scope.
+Saved backups remain accessible offline.
 
 The stable bundle identifier and internal repository directory (`PhoneBackup`)
 are retained so the display-name change preserves existing preferences and

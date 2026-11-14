@@ -275,6 +275,16 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 **Manual acceptance remains open:** The current Google archive has not been installed on this Mac, and consent, download, cancellation, external-install preservation, and post-install device discovery still need user-observed macOS acceptance. No phone folders were accessed.
 
+### Step 8.15 — Contextual Android connection guide
+
+**Planner-approved plan:** Add a native, numbered guide to Connection Setup explaining Developer options, USB debugging, a data-capable USB connection, and Android’s trust prompt. Explain why Androdo needs ADB and that USB debugging grants the authorized Mac an ADB command channel; do not imply Android confines that channel to the chosen files. Link directly to Google’s instructions and note that menu paths vary by device. Show state-specific guidance for no device, unauthorized, offline, ready, and maintenance states. Make the Overview action name the needed connection step and add a Connection Setup route plus direct guide link in disconnected File Explorer. Keep Android setup and consent under user control; opening the guide does not probe devices or phone folders. Keep Androdo’s blue/teal/copper identity and native, numbered layout; no manufacturer screenshots or completion flags.
+
+**Implementation slice:** Add a reusable guide view, refactor Connection Setup to foreground phone preparation and tuck installation alternatives behind a disclosure when ADB already exists, contextualize the Overview action, and add help actions to File Explorer’s disconnected state. Update local setup documentation and manual acceptance states. Commit: `feat(ui): add contextual Android connection guide`.
+
+**Review/acceptance:** Planner review complete. Reviewer review is required before commit. Manual checks cover links, no-device/unauthorized/offline/ready states, compact and light/dark layouts, keyboard/VoiceOver, and confirm that viewing help causes no device or folder access. No live phone access is needed for implementation.
+
+**Implementation complete:** Added the reusable four-step guide with manufacturer-variation notes, phone-state guidance, Google documentation links, and an accurate explanation of ADB trust/privacy. Connection Setup foregrounds the phone guide once ADB exists and keeps installation options available in a disclosure; Overview labels connection actions by state, and disconnected File Explorer opens the same guide plus a direct documentation link. README and manual acceptance notes were updated. Reviewer approved after the shared-storage-root behavior was clarified. `git diff --check` passed; no build or tests were run and no phone folders were accessed. Manual visual/accessibility acceptance remains open. Commit: `feat(ui): add contextual Android connection guide`.
+
 ### Step 9 — Packaging and end-to-end acceptance
 
 **Deliverable:** Add reproducible local `.app` build steps using the installed ADB, ADB location recovery, macOS CI for engine/app targets, and a short user guide. Keep initial release local/ad-hoc signed; defer notarization, universal binaries, App Store, and ADB redistribution pending licensing review.
