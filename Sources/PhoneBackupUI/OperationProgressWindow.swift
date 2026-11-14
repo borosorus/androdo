@@ -59,7 +59,8 @@ public struct OperationProgressWindow: View {
                         Text(byteProgress(event.progress))
                     }
                     .font(.callout).foregroundStyle(.secondary).monospacedDigit()
-                } else if model.progressSession?.stage == .planning {
+                } else if model.progressSession?.stage == .planning,
+                          model.progressSession?.kind != .installADB {
                     Text("Checking files before copying starts.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
@@ -111,6 +112,9 @@ public struct OperationProgressWindow: View {
 
     private var hasDetails: Bool {
         if model.progressSession?.failure != nil { return true }
+        if model.progressSession?.kind == .installADB {
+            return model.adbInstallationResultMessage != nil
+        }
         guard model.progressSession?.stage == .running || model.progressSession?.isFinished == true else { return false }
         return model.operationEvent?.failure != nil || model.operationEvent?.warnings.isEmpty == false ||
             model.recoveryAttempt != nil || !model.pendingAttempts.isEmpty || model.restoreResult != nil || model.copyResult != nil
@@ -118,6 +122,7 @@ public struct OperationProgressWindow: View {
 
     private var showsTransferCounts: Bool {
         guard let session = model.progressSession else { return model.operationEvent != nil }
+        guard session.kind != .installADB else { return false }
         return (session.stage == .running || session.isFinished) && session.failure == nil && !session.wasCancelled
     }
 
@@ -133,6 +138,7 @@ extension AppModel {
     /// Unknown scan/start totals remain indeterminate; never invent percentages or an ETA.
     var progressFraction: Double? {
         guard let session = progressSession, !session.cancellationRequested else { return nil }
+        if session.kind == .installADB { return adbInstallationProgress?.downloadFraction }
         if session.stage == .planning, let progress = restorePlanningProgress, progress.totalItems > 0 {
             return min(1, max(0, Double(progress.completedItems) / Double(progress.totalItems)))
         }

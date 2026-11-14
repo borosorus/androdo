@@ -10,12 +10,17 @@ struct OperationProgressDetails: View {
             if let failure = model.progressSession?.failure {
                 MessageBanner(text: failure, symbol: "exclamationmark.triangle", isWarning: true)
             }
-            if showsOperationDetails, let event = model.operationEvent {
+            if model.progressSession?.kind == .installADB,
+               model.progressSession?.failure == nil,
+               let message = model.adbInstallationResultMessage {
+                MessageBanner(text: message, symbol: "checkmark.circle", isWarning: false)
+            }
+            if !isADBInstallation, showsOperationDetails, let event = model.operationEvent {
                 if let failure = event.failure {
                     MessageBanner(text: failureMessage(failure), symbol: "exclamationmark.triangle", isWarning: true)
                 }
             }
-            if showsOperationDetails, let event = model.operationEvent, !event.warnings.isEmpty {
+            if !isADBInstallation, showsOperationDetails, let event = model.operationEvent, !event.warnings.isEmpty {
                 DisclosureGroup("Warning details (\(event.warnings.count))") {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 8) {
@@ -29,15 +34,15 @@ struct OperationProgressDetails: View {
                     }.frame(maxHeight: 110)
                 }
             }
-            if (model.progressSession == nil || model.progressSession?.isFinished == true),
+            if !isADBInstallation, (model.progressSession == nil || model.progressSession?.isFinished == true),
                model.recoveryAttempt != nil || !model.pendingAttempts.isEmpty {
                 ScrollView { recoveryContent }.frame(maxHeight: 170)
             }
-            if showsOperationDetails, let result = model.restoreResult {
+            if !isADBInstallation, showsOperationDetails, let result = model.restoreResult {
                 Text("Restore result: \(result.items.filter { $0.state == .publishedAndVerified }.count) verified, \(result.items.filter { $0.state != .publishedAndVerified }.count) need attention.")
                     .font(.callout).foregroundStyle(.secondary)
             }
-            if showsOperationDetails, let result = model.copyResult {
+            if !isADBInstallation, showsOperationDetails, let result = model.copyResult {
                 Text("Copy result: \(result.items.filter { $0.state == .publishedAndVerified }.count) verified, \(result.items.filter { $0.state != .publishedAndVerified }.count) need attention.")
                     .font(.callout).foregroundStyle(.secondary)
             }
@@ -107,6 +112,8 @@ struct OperationProgressDetails: View {
         guard let session = model.progressSession else { return true }
         return (session.stage == .running || session.stage == .finished) && session.failure == nil && !session.wasCancelled
     }
+
+    private var isADBInstallation: Bool { model.progressSession?.kind == .installADB }
 }
 
 /// Compact background presentation. Detailed results and recovery remain in the progress window.

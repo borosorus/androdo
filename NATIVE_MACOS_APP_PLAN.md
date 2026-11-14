@@ -271,7 +271,9 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 **8.13 complete:** Added a bounded discovery resolver with explicit-path preference and managed-install recovery, plus an app-owned, staged Platform Tools installer with HTTPS host checks, archive preflight, extraction quotas/CRC validation, ADB version validation, cross-process install serialization and atomic activation. Added generated ZIP and temporary-path regression fixtures. The installer/core reviewer approved; tests were not run in this turn, and the live Google archive has not been downloaded for compatibility validation. Commit: `feat(adb): add secure local Platform Tools installation`.
 
-**8.14 in progress:** The explicit-consent setup, shared progress/cancellation and documentation are implemented locally. Final UI review and commit remain open.
+**8.14 complete:** Setup shows the selected ADB path and distinguishes Androdo’s managed copy, requires an unchecked-by-default agreement control before download, explains the app-owned destination and leaves other ADB installations untouched. Installation uses the shared progress window, supports background/reopen and safe cancellation, reports real download progress, and requires an explicit Check Again before device discovery. Setup opened from Settings can also open progress when the main window is closed. Cancellation transport errors are presented as cancellation, and local `adb version` failures use an install-specific message. The macOS guide and acceptance checklist are updated. Reviewer approved the UI/lifecycle path; application-model lifecycle fixtures are not yet present. No Swift build/tests were run in this turn. Commit: `feat(macOS): guide ADB installation with shared progress`.
+
+**Manual acceptance remains open:** The current Google archive has not been installed on this Mac, and consent, download, cancellation, external-install preservation, and post-install device discovery still need user-observed macOS acceptance. No phone folders were accessed.
 
 ### Step 9 — Packaging and end-to-end acceptance
 

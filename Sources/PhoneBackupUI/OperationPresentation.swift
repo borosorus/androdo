@@ -1,6 +1,6 @@
 import PhoneBackupCore
 
-public enum OperationKind: Sendable, Equatable { case backup, restore, export, copy }
+public enum OperationKind: Sendable, Equatable { case backup, restore, export, copy, installADB }
 
 /// Presentation identity survives completion; cancellation state remains owned by AppModel.
 struct OperationPresentation: Equatable {
@@ -16,7 +16,14 @@ struct OperationPresentation: Equatable {
 
     init(kind: OperationKind?, event: OperationEvent?, isRunning: Bool,
          recovery: BackupAttempt?, pendingCount: Int) {
-        let noun: String = switch kind { case .backup: "Backup"; case .restore: "Restore"; case .copy: "Copy"; case .export: "Export"; case nil: "Operation" }
+        let noun: String = switch kind {
+        case .backup: "Backup"
+        case .restore: "Restore"
+        case .copy: "Copy"
+        case .export: "Export"
+        case .installADB: "Platform Tools"
+        case nil: "Operation"
+        }
         guard let event else {
             if isRunning {
                 title = "Starting \(noun.lowercased())…"
@@ -51,7 +58,14 @@ struct OperationPresentation: Equatable {
             phase = "Previously completed data remains available."
             symbol = "xmark.circle"
         case .scanning, .planning, .transferring, .verifying, .committing:
-            title = switch kind { case .backup: "Backing up"; case .restore: "Restoring files"; case .copy: "Copying files"; case .export: "Exporting files"; case nil: "Working…" }
+            title = switch kind {
+            case .backup: "Backing up"
+            case .restore: "Restoring files"
+            case .copy: "Copying files"
+            case .export: "Exporting files"
+            case .installADB: "Installing Platform Tools"
+            case nil: "Working…"
+            }
             phase = switch event.phase {
             case .scanning: "Scanning selected files…"
             case .planning: "Checking destinations…"

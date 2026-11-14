@@ -140,7 +140,15 @@ public final class GoogleADBPlatformToolsInstaller: ADBPlatformToolsInstalling, 
         guard ADBExecutableResolver.isExecutableFile(at: generationADB) else {
             throw ADBPlatformToolsInstallError.invalidArchive("The archive does not contain an executable platform-tools/adb.")
         }
-        let output = try await commandRunner.run(executable: generationADB, arguments: ["version"], timeout: 15)
+        let output: CommandOutput
+        do {
+            output = try await commandRunner.run(executable: generationADB, arguments: ["version"], timeout: 15)
+        } catch {
+            if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
+                throw CancellationError()
+            }
+            throw ADBPlatformToolsInstallError.adbValidationFailed
+        }
         let version = String(data: output.data, encoding: .utf8) ?? ""
         guard output.exitCode == 0, version.contains("Android Debug Bridge version") else {
             throw ADBPlatformToolsInstallError.adbValidationFailed

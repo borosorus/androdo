@@ -28,6 +28,39 @@ extension AppModel {
             return OperationPresentation(kind: operationKind, event: operationEvent, isRunning: isOperationRunning,
                                          recovery: recoveryAttempt, pendingCount: pendingAttempts.count)
         }
+        if session.kind == .installADB {
+            let noun = "Platform Tools"
+            if session.cancellationRequested && !session.isFinished {
+                return OperationPresentation(title: "Cancelling installation…", symbol: "xmark.circle",
+                                             phase: "Waiting for the download or extraction to stop safely.")
+            }
+            if session.failure != nil {
+                return OperationPresentation(title: "Platform Tools needs attention", symbol: "exclamationmark.triangle",
+                                             phase: "Review the installation details below before trying again.")
+            }
+            if session.wasCancelled {
+                return OperationPresentation(title: "Installation cancelled", symbol: "xmark.circle",
+                                             phase: "Your existing ADB setup was left unchanged.")
+            }
+            if session.isFinished {
+                return OperationPresentation(title: "Platform Tools installed", symbol: "checkmark.circle.fill",
+                                             phase: adbInstallationResultMessage ?? "Choose Check Again when you’re ready to look for your phone.")
+            }
+            let phase: String
+            switch adbInstallationProgress?.phase {
+            case .downloading:
+                if let progress = adbInstallationProgress,
+                   let expected = progress.expectedBytes, expected > 0 {
+                    phase = "Downloading · \(UIFormatting.bytes(progress.downloadedBytes)) of \(UIFormatting.bytes(expected))"
+                } else { phase = "Downloading Google’s Platform Tools for macOS…" }
+            case .extracting: phase = "Unpacking Platform Tools…"
+            case .validating: phase = "Checking that ADB runs…"
+            case .publishing: phase = "Finishing installation…"
+            case nil: phase = "Preparing the download…"
+            }
+            return OperationPresentation(title: "Installing \(noun)", symbol: "arrow.down.circle",
+                                         phase: phase)
+        }
         let noun = session.kind.displayName
         if session.cancellationRequested && !session.isFinished {
             return OperationPresentation(title: "Cancelling \(noun.lowercased())…", symbol: "xmark.circle",
@@ -44,6 +77,7 @@ extension AppModel {
                     let action = progress.stage == .verifyingBackup ? "Verifying backup" : "Checking destination paths"
                     phase = progress.totalItems > 0 ? "\(action) · \(progress.completedItems) of \(progress.totalItems)" : "\(action)…"
                 } else { phase = "Checking the restore point…" }
+            case .installADB: phase = "Preparing the Platform Tools download…"
             }
             return OperationPresentation(title: "Preparing \(noun.lowercased())", symbol: "magnifyingglass", phase: phase)
         case .starting:
@@ -62,6 +96,6 @@ extension AppModel {
 
 extension OperationKind {
     var displayName: String {
-        switch self { case .backup: "Backup"; case .restore: "Restore"; case .export: "Export"; case .copy: "Copy" }
+        switch self { case .backup: "Backup"; case .restore: "Restore"; case .export: "Export"; case .copy: "Copy"; case .installADB: "Platform Tools" }
     }
 }

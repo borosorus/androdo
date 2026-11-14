@@ -17,7 +17,21 @@ checks, copied into the app, or committed.
 
 - [ ] Launch `dist/Androdo.app` without a connected phone; observe the main
       window and the ADB recovery control.
-- [ ] Select an executable fake or installed ADB; use **Change ADB…** to switch
+- [ ] Open Connection Setup and verify the existing ADB path is shown when
+      found. Discovery checks only known SDK/Homebrew/managed paths and absolute
+      `PATH` entries; it does not recursively search the Mac.
+- [ ] Verify **Install Platform Tools** stays disabled until the unchecked
+      Google SDK terms agreement is selected, and that the managed destination
+      is visible before starting.
+- [ ] During a local install, observe download progress and confirm the progress
+      window can be backgrounded and reopened. Cancel before publication and
+      verify an existing configured ADB path remains selected.
+- [ ] Complete an install and verify the old Android Studio/Homebrew/manual
+      ADB file remains in place. Confirm Androdo waits for **Check Again**
+      before enumerating connected devices.
+- [ ] Simulate an unavailable network or failed install and verify the error is
+      shown in progress details while the previous ADB setup still works.
+- [ ] Select an executable fake or installed ADB; use **Locate Another ADB…** to switch
       paths; verify an invalid selection leaves the previous working path saved.
 - [ ] Verify the app starts and opens the offline Backups view without ADB.
 - [ ] Verify Activity contains only the current session and does not show paths,
@@ -51,14 +65,15 @@ without recording fixture contents. Permission-denied behavior, external-volume
 reconnects, Finder promise behavior, accessibility, and appearance are device
 and Mac dependent; do not claim them tested until observed.
 
-## Androdo setup and control polish
+## ADB setup and control polish
 
 - [ ] App menu, About, Finder bundle, alerts, and Settings use Androdo.
 - [ ] App name/emblem appears in the native toolbar; no detached sidebar banner.
 - [ ] Main actions, review sheets, Settings, and file actions use consistent larger native controls.
 - [ ] With no ADB configured, Overview and the sidebar open the same guided setup.
-- [ ] Guide links to Google's Platform Tools/USB-debugging documentation and can copy the Homebrew command.
-- [ ] After installing outside the app, Check Again discovers ADB; a custom location works through Locate ADB.
+- [ ] Setup links to Google's Platform Tools/USB-debugging documentation and can copy the Homebrew command.
+- [ ] The app-owned Platform Tools copy is stored under `~/Library/Application Support/Androdo/Platform Tools`; custom locations work through Locate ADB.
+- [ ] After installing outside the app, Check Again discovers ADB; after an in-app install it waits for the same explicit Check Again action.
 - [ ] Discovery failure remains visible inside the guide, even without the main window.
 
 ## Phone-trial UX regression checks

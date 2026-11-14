@@ -52,6 +52,9 @@ public final class AppModel {
     public private(set) var isPlanningExport = false
     public private(set) var restorePlanningProgress: RestorePlanningProgress?
     public private(set) var progressSession: OperationProgressSession?
+    public private(set) var adbInstallationProgress: ADBInstallationProgress?
+    public private(set) var adbInstallationResultMessage: String?
+    public private(set) var isInstallingADB = false
     public var isShowingPhoneRestoreSetup = false
     public private(set) var isPlanningCopy = false
     public private(set) var isStartingOperation = false
@@ -66,6 +69,7 @@ public final class AppModel {
 
     @ObservationIgnored private var services: AppServices
     @ObservationIgnored private let adbResolver: (URL?) -> URL?
+    @ObservationIgnored private let adbInstaller: any ADBPlatformToolsInstalling
     @ObservationIgnored private let preferences: AppPreferences
     @ObservationIgnored private let locationAccess: BackupLocationAccess
     @ObservationIgnored private var planningTask: Task<BackupPlan, Error>?
@@ -73,6 +77,7 @@ public final class AppModel {
     @ObservationIgnored private var restorePlanningTask: Task<RestorePlan, Error>?
     @ObservationIgnored private var restorePlanningRequest: UUID?
     @ObservationIgnored private var operationTask: Task<Void, Never>?
+    @ObservationIgnored private var adbInstallationTask: Task<Void, Never>?
     @ObservationIgnored private var activeOperationKind: ActiveOperationKind?
     @ObservationIgnored private var activeActivityID: UUID?
     @ObservationIgnored private var copyScopedURLs: [URL] = []
@@ -84,12 +89,16 @@ public final class AppModel {
     @ObservationIgnored private var loadedRepositoryLocation: URL?
 
     public var isOperationRunning: Bool { operationID != nil }
-    public var isBusy: Bool { isPlanningBackup || isPlanningExport || isPlanningCopy || isStartingOperation || isOperationRunning || isRefreshingDevices }
+    public var isBusy: Bool { isPlanningBackup || isPlanningExport || isPlanningCopy || isStartingOperation || isOperationRunning || isRefreshingDevices || isInstallingADB }
     public var backupLocationNeedsAttention: Bool {
         requiresRepositoryRecoveryConfirmation || (backupLocation != nil && loadedRepositoryLocation != backupLocation)
     }
     public var hasADB: Bool { services.deviceTransport != nil }
     public var adbExecutableURL: URL? { services.adbExecutable }
+    public var isUsingManagedADB: Bool {
+        guard let adbExecutableURL else { return false }
+        return adbExecutableURL.standardizedFileURL.path == adbInstaller.managedADBExecutableURL.standardizedFileURL.path
+    }
     public var selectedRepository: BackupRepositoryInfo? {
         repositories.first(where: { $0.id == selectedRepositoryID })
     }
@@ -101,8 +110,10 @@ public final class AppModel {
     public init(services: AppServices = .live(), preferences: AppPreferences = .standard,
                 locationAccess: BackupLocationAccess = BackupLocationAccess(),
                 activityStore: ActivityStore = ActivityStore(), loadOnStart: Bool = true,
-                adbResolver: @escaping (URL?) -> URL? = { ADBExecutableResolver.resolve(preferredExecutable: $0) }) {
+                adbResolver: @escaping (URL?) -> URL? = { ADBExecutableResolver.resolve(preferredExecutable: $0) },
+                adbInstaller: any ADBPlatformToolsInstalling = GoogleADBPlatformToolsInstaller()) {
         self.adbResolver = adbResolver
+        self.adbInstaller = adbInstaller
         self.services = services
         self.preferences = preferences
         self.locationAccess = locationAccess
@@ -271,6 +282,70 @@ public final class AppModel {
         }
         configureADB(at: url)
         Task { await refreshDevices() }
+    }
+
+    /// Starts Google's Platform Tools installation after explicit agreement to
+    /// Google's SDK terms. It never enumerates devices or opens phone folders.
+    @discardableResult
+    public func beginADBInstallation(acceptingGoogleTerms: Bool) -> Bool {
+        guard acceptingGoogleTerms, !isBusy else { return false }
+        errorMessage = nil
+        statusMessage = nil
+        adbInstallationProgress = nil
+        adbInstallationResultMessage = nil
+        let progressID = beginProgress(.installADB, stage: .planning)
+        isInstallingADB = true
+
+        let installer = adbInstaller
+        adbInstallationTask = Task { [weak self] in
+            do {
+                let executable = try await installer.install { [weak self] update in
+                    await MainActor.run {
+                        self?.receiveADBInstallationProgress(update, for: progressID)
+                    }
+                }
+                self?.finishADBInstallation(at: executable, for: progressID)
+            } catch {
+                let wasCancelled = Task.isCancelled || Self.isInstallationCancellation(error)
+                await MainActor.run {
+                    self?.finishADBInstallation(with: error, cancelled: wasCancelled, for: progressID)
+                }
+            }
+        }
+        return true
+    }
+
+    private func finishADBInstallation(at executable: URL, for id: UUID) {
+        guard progressSession?.id == id else { return }
+        configureADB(at: executable)
+        adbInstallationResultMessage = "ADB is ready. Choose Check Again to look for your phone."
+        progressSession?.stage = .finished
+        isInstallingADB = false
+        adbInstallationTask = nil
+    }
+
+    private func finishADBInstallation(with error: Error, cancelled: Bool, for id: UUID) {
+        guard progressSession?.id == id else { return }
+        if cancelled {
+            progressSession?.stage = .finished
+            progressSession?.wasCancelled = true
+            adbInstallationResultMessage = "Installation cancelled. Your existing ADB setup was left unchanged."
+        } else {
+            progressSession?.stage = .finished
+            progressSession?.failure = UserFacingError.message(for: error)
+        }
+        isInstallingADB = false
+        adbInstallationTask = nil
+    }
+
+    private static func isInstallationCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        return (error as? URLError)?.code == .cancelled
+    }
+
+    private func receiveADBInstallationProgress(_ progress: ADBInstallationProgress, for id: UUID) {
+        guard progressSession?.id == id, isInstallingADB else { return }
+        adbInstallationProgress = progress
     }
 
     /// Rediscovers tools installed after launch. Device discovery never opens phone folders.
@@ -802,6 +877,8 @@ public final class AppModel {
             operationKind = nil
             restoreResult = nil
             copyResult = nil
+            adbInstallationProgress = nil
+            adbInstallationResultMessage = nil
         }
     }
 
@@ -845,6 +922,9 @@ public final class AppModel {
 
     public var canCancelProgress: Bool {
         guard let session = progressSession, !session.cancellationRequested else { return false }
+        if session.kind == .installADB {
+            return isInstallingADB && session.stage != .finished && adbInstallationProgress?.phase != .publishing
+        }
         switch session.stage {
         case .planning: return true
         case .running: return isOperationRunning && operationEvent?.phase.isTerminal != true
@@ -860,6 +940,7 @@ public final class AppModel {
             case .backup: cancelPlanning()
             case .copy: copyPlanningTask?.cancel()
             case .restore, .export: cancelRestorePlanning()
+            case .installADB: adbInstallationTask?.cancel()
             case nil: break
             }
         } else { await cancelOperation() }

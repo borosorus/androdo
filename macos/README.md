@@ -9,8 +9,8 @@ Android app-private data, apps, settings, or the operating system.
 
 - Apple Silicon Mac running macOS 14 or later.
 - Full Xcode with its command-line tools selected (`xcode-select -p`).
-- Android Platform Tools installed separately. On this Mac, `brew install --cask
-  android-platform-tools` installs ADB. Androdo does not bundle ADB.
+- Android Platform Tools can be installed from Androdo after agreeing to
+  Google’s Android SDK License Agreement. Androdo does not bundle ADB.
 
 ## Build and run from source
 
@@ -40,23 +40,34 @@ outside v1.
 
 ## Set up ADB
 
-Androdo checks common Android SDK and Homebrew locations and the current
-`PATH`. **Set Up Connection…** in Overview opens a guide explaining ADB,
-Google’s [Platform Tools download](https://developer.android.com/tools/releases/platform-tools),
-and USB debugging/authorization. Android Studio is not required.
+Androdo checks a saved executable path, its own managed Platform Tools folder,
+`ANDROID_HOME`/`ANDROID_SDK_ROOT`, the standard Android SDK folder, common
+Homebrew locations and absolute entries in the current `PATH`. It does not
+search the whole Mac. **Set Up Connection…** in Overview offers to install the
+current macOS Platform Tools directly from Google after you review and agree to
+Google’s Android SDK License Agreement. Android Studio is not required.
 
-Download Platform Tools for Mac from Google, unzip it into a permanent folder,
-then choose **Locate ADB…** and select `platform-tools/adb`. If you already use
-Homebrew, the guide can copy this command for you to run in Terminal:
+The app-owned copy is stored at `~/Library/Application Support/Androdo/Platform
+Tools`. Existing Android Studio, Homebrew and manually selected copies remain
+untouched. Androdo stages and verifies the downloaded archive and ADB executable
+before activating the new copy. Cancel or a failed install leaves the previous
+managed version in place. Installation does not enumerate devices or open
+phone folders; after it finishes, choose **Check Again** when you want Androdo
+to look for your phone.
+
+You can also download Platform Tools for Mac from Google, unzip it into a
+permanent folder, then choose **Locate ADB…** and select `platform-tools/adb`.
+If you already use Homebrew, the guide can copy this command for you to run in
+Terminal:
 
 ```sh
 brew install --cask android-platform-tools
 ```
 
-**Check Again** searches for a new installation without restarting the app.
-For a custom location, use **Locate ADB…**. The guide remains available under
-**Androdo → Settings… → Connection Setup…**. It does not run installers or
-Homebrew itself. The app remembers a selected executable's path.
+**Check Again** discovers an installation and enumerates connected devices
+without restarting the app. For a custom location, use **Locate ADB…**. The
+guide remains available under **Androdo → Settings… → Connection Setup…**. It
+does not run Homebrew. The app remembers a selected executable's path.
 
 Enable Developer options and USB debugging on the phone, connect it by USB,
 and accept its authorization prompt for this Mac. Discovery and Check Again
@@ -75,7 +86,7 @@ latest phone files. Select the phone folders you want, review the size and
 scope, then confirm **Back Up…**. The app verifies copied bytes before it
 marks files complete.
 
-Use **Phone Files** for live browsing and direct copies. Back/Forward can reuse
+Use **File Explorer** for live browsing and direct copies. Back/Forward can reuse
 visited folder listings; **Refresh** checks the phone again. Cached metadata is
 kept only in memory and is invalidated on connection/transport changes and
 phone-writing operations.
