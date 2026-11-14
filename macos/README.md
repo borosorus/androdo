@@ -69,16 +69,28 @@ without restarting the app. For a custom location, use **Locate ADB…**. The
 guide remains available under **Androdo → Settings… → Connection Setup…**. It
 does not run Homebrew. The app remembers a selected executable's path.
 
-Connection Setup includes a numbered phone guide for enabling Developer
-options, turning on USB debugging, connecting with a data-capable cable, and
-authorizing this Mac. Android settings paths vary by manufacturer; the guide
-links to Google’s [Developer options instructions](https://developer.android.com/studio/debug/dev-options#enable)
+Connection Setup includes a numbered USB guide and, with ADB available, a
+separate Wi-Fi guide for Android 11 or later. For Wi-Fi, pair using the address,
+port, and temporary code from Android’s **Pair new device** screen. Then use the
+different address/port shown on the main **Wireless debugging** screen to
+connect. A phone already paired with this Mac can connect without entering a
+code again. Both devices must be on the same trusted network. Pairing remains
+trusted until you remove this Mac from Android’s **Paired devices** list.
+
+On macOS 15 or later, macOS may ask to allow local-network access. If you
+denied it, enable Androdo under **System Settings → Privacy & Security → Local
+Network**. Androdo’s Connect action uses the address you enter and does not run
+its own network scan. ADB itself may automatically discover or reconnect phones
+already paired with this Mac.
+When USB and Wi-Fi are both active, Androdo recognizes one phone and prefers
+USB for transfers; unplug USB to use Wi-Fi.
+
+The USB guide links to Google’s [Developer options instructions](https://developer.android.com/studio/debug/dev-options#enable)
 and [ADB authorization help](https://developer.android.com/tools/adb#Enabling).
-Authorize only a computer you trust: USB debugging gives it an ADB command
-connection to Android. Discovery and Check Again enumerate connected devices.
-If File Explorer is already selected when a phone connects, Androdo opens the
-shared-storage root and lists its immediate entries; it does not recurse into
-other folders. Other contents appear as you navigate or choose a backup scope.
+USB debugging gives an authorized computer an ADB command connection to
+Android. Device discovery reads only identity information; it does not browse
+phone folders. Connecting never opens shared storage automatically. In File
+Explorer, choose **Open Shared Storage** when you are ready to list that folder.
 Saved backups remain accessible offline.
 
 The stable bundle identifier and internal repository directory (`PhoneBackup`)

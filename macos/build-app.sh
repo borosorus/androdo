@@ -41,6 +41,17 @@ fi
 /usr/libexec/PlistBuddy -c "Add :AndrodoBuild string $BUILD_REVISION" "$APP_BUNDLE/Contents/Info.plist"
 
 plutil -lint "$APP_BUNDLE/Contents/Info.plist"
+if ! /usr/libexec/PlistBuddy -c 'Print :NSLocalNetworkUsageDescription' "$APP_BUNDLE/Contents/Info.plist" >/dev/null; then
+    echo "The app bundle is missing its local-network privacy description." >&2
+    exit 1
+fi
+for bonjour_service in _adb._tcp _adb-tls-pairing._tcp _adb-tls-connect._tcp; do
+    if ! /usr/libexec/PlistBuddy -c 'Print :NSBonjourServices' "$APP_BUNDLE/Contents/Info.plist" \
+        | grep -F "$bonjour_service" >/dev/null; then
+        echo "The app bundle is missing Bonjour service $bonjour_service." >&2
+        exit 1
+    fi
+done
 codesign --force --deep --sign - "$APP_BUNDLE"
 # Launch Services must be able to traverse the app bundle directory.
 chmod 755 "$APP_BUNDLE"

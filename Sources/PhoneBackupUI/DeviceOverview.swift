@@ -155,14 +155,23 @@ struct DeviceOverview: View {
 
     private var deviceStatus: String {
         guard model.hasADB else { return "Set up the Android connection to get started." }
-        guard let device = model.selectedDevice else { return "Connect your phone by USB." }
+        guard let device = model.selectedDevice else { return "Connect your phone over USB or Wi-Fi." }
         return switch device.state {
-        case .device: "Connected by USB"
-        case .unauthorized: "Unlock the phone and allow USB debugging."
-        case .offline: "The phone is offline. Reconnect the USB cable."
+        case .device: connectedRouteDescription(device)
+        case .unauthorized: "Unlock the phone and allow USB debugging, or pair it in Connection Setup."
+        case .offline: "The phone is offline. Check USB or Wireless debugging, then refresh."
         case .bootloader, .recovery, .sideload: "Android is in a maintenance mode. Restart it to browse shared files."
         case .unknown(let state): "Unrecognized device state: \(state)"
         }
+    }
+
+    private func connectedRouteDescription(_ device: AndroidDevice) -> String {
+        let hasUSB = device.sessions.contains { $0.connection.kind == .usb }
+        let hasWiFi = device.sessions.contains { $0.connection.kind == .wireless }
+        if hasUSB && hasWiFi { return "Connected by USB and Wi-Fi. Transfers prefer USB while it’s connected." }
+        if hasWiFi { return "Connected over Wi-Fi." }
+        if hasUSB { return "Connected by USB." }
+        return "Connected through ADB."
     }
 
     private var selectionTitle: String {

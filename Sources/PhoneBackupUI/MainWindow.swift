@@ -143,12 +143,12 @@ private struct DeviceSidebarRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: device.state == .device ? "cable.connector" : "exclamationmark.circle")
+            Image(systemName: device.state == .device ? connectionSymbol : "exclamationmark.circle")
                 .foregroundStyle(device.state == .device ? Color.accentColor : Color.secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.model ?? "Android device")
                     .lineLimit(1)
-                Text(device.state == .device ? "Connected" : String(describing: device.state))
+                Text(device.state == .device ? connectionSummary : String(describing: device.state))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -157,6 +157,19 @@ private struct DeviceSidebarRow: View {
         }
         .contentShape(Rectangle())
         .padding(.vertical, 4)
+    }
+
+    private var connectionSymbol: String {
+        device.preferredSession?.connection.kind == .wireless ? "wifi" : "cable.connector"
+    }
+
+    private var connectionSummary: String {
+        let hasUSB = device.sessions.contains { $0.connection.kind == .usb }
+        let hasWiFi = device.sessions.contains { $0.connection.kind == .wireless }
+        if hasUSB && hasWiFi { return "USB + Wi-Fi" }
+        if hasWiFi { return "Wi-Fi" }
+        if hasUSB { return "USB" }
+        return "Connected"
     }
 }
 

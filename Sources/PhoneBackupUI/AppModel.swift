@@ -61,6 +61,11 @@ public final class AppModel {
     public private(set) var isStartingOperation = false
     public private(set) var isLoadingFolder = false
     public private(set) var isRefreshingDevices = false
+    public private(set) var isPairingWireless = false
+    public private(set) var isConnectingWireless = false
+    public private(set) var isCancellingWireless = false
+    public private(set) var wirelessSetupMessage: String?
+    public private(set) var wirelessSetupMessageIsError = false
     public var isShowingBackupReview = false
     public var isShowingExportReview = false
     public var isShowingCopyReview = false
@@ -79,6 +84,10 @@ public final class AppModel {
     @ObservationIgnored private var restorePlanningRequest: UUID?
     @ObservationIgnored private var operationTask: Task<Void, Never>?
     @ObservationIgnored private var adbInstallationTask: Task<Void, Never>?
+    @ObservationIgnored private var wirelessTask: Task<Void, Never>?
+    @ObservationIgnored private var wirelessRequestID: UUID?
+    @ObservationIgnored private var wirelessCancellationID: UUID?
+    @ObservationIgnored private var wirelessOwnerID: UUID?
     @ObservationIgnored private var activeOperationKind: ActiveOperationKind?
     @ObservationIgnored private var activeActivityID: UUID?
     @ObservationIgnored private var copyScopedURLs: [URL] = []
@@ -90,11 +99,12 @@ public final class AppModel {
     @ObservationIgnored private var loadedRepositoryLocation: URL?
 
     public var isOperationRunning: Bool { operationID != nil }
-    public var isBusy: Bool { isPlanningBackup || isPlanningExport || isPlanningCopy || isStartingOperation || isOperationRunning || isRefreshingDevices || isInstallingADB }
+    public var isBusy: Bool { isPlanningBackup || isPlanningExport || isPlanningCopy || isStartingOperation || isOperationRunning || isRefreshingDevices || isInstallingADB || isPairingWireless || isConnectingWireless }
     public var backupLocationNeedsAttention: Bool {
         requiresRepositoryRecoveryConfirmation || (backupLocation != nil && loadedRepositoryLocation != backupLocation)
     }
     public var hasADB: Bool { services.deviceTransport != nil }
+    public var canUseWirelessADB: Bool { hasADB && services.wirelessADB != nil }
     public var connectionGuideDeviceState: DeviceState? {
         selectedDevice?.state ?? deviceDiscoveryIssues.first(where: { $0.state != .device })?.state
     }
@@ -141,7 +151,7 @@ public final class AppModel {
     }
 
     public func refreshDevices() async {
-        guard !isRefreshingDevices else { return }
+        guard !isRefreshingDevices, !isPairingWireless, !isConnectingWireless else { return }
         isRefreshingDevices = true
         defer { isRefreshingDevices = false }
         guard let transport = services.deviceTransport else {
@@ -191,6 +201,139 @@ public final class AppModel {
             await refreshDeviceBackupSummary()
             errorMessage = UserFacingError.message(for: error)
         }
+    }
+
+    /// Starts a one-time Android Wireless debugging pairing attempt.
+    /// The code is validated and passed directly to the service; it is never stored in app state.
+    public func pairWirelessADB(host: String, port: String, code: String, ownerID: UUID) {
+        guard !isBusy else { return }
+        guard let wirelessADB = services.wirelessADB else {
+            setWirelessMessage("Set up ADB on this Mac before pairing over Wi-Fi.", isError: true)
+            return
+        }
+
+        let endpoint: ADBWirelessEndpoint
+        let pairingCode: ADBPairingCode
+        do {
+            endpoint = try ADBWirelessEndpoint(host: host, port: port)
+            pairingCode = try ADBPairingCode(code)
+        } catch {
+            setWirelessMessage(UserFacingError.message(for: error), isError: true)
+            return
+        }
+
+        let requestID = UUID()
+        wirelessRequestID = requestID
+        wirelessOwnerID = ownerID
+        isPairingWireless = true
+        isCancellingWireless = false
+        wirelessSetupMessage = nil
+        wirelessSetupMessageIsError = false
+        wirelessTask = Task { [weak self] in
+            do {
+                try await wirelessADB.pair(endpoint: endpoint, code: pairingCode)
+                self?.finishWirelessOperation(requestID, message: "Paired with this Mac. Enter the address and port from Android’s main Wireless debugging screen, then choose Connect.", isError: false)
+            } catch is CancellationError {
+                self?.finishWirelessOperation(requestID,
+                    message: "Pairing attempt cancelled. If Android completed it, remove this Mac from the phone’s Paired devices list to revoke trust.",
+                    isError: false)
+                return
+            } catch {
+                self?.finishWirelessOperation(requestID, message: UserFacingError.message(for: error), isError: true)
+            }
+        }
+    }
+
+    /// Connects only the entered wireless endpoint and selects its verified device identity.
+    public func connectWirelessADB(host: String, port: String, ownerID: UUID) {
+        guard !isBusy else { return }
+        guard let wirelessADB = services.wirelessADB else {
+            setWirelessMessage("Set up ADB on this Mac before connecting over Wi-Fi.", isError: true)
+            return
+        }
+
+        let endpoint: ADBWirelessEndpoint
+        do {
+            endpoint = try ADBWirelessEndpoint(host: host, port: port)
+        } catch {
+            setWirelessMessage(UserFacingError.message(for: error), isError: true)
+            return
+        }
+
+        let requestID = UUID()
+        wirelessRequestID = requestID
+        wirelessOwnerID = ownerID
+        isConnectingWireless = true
+        isCancellingWireless = false
+        wirelessSetupMessage = nil
+        wirelessSetupMessageIsError = false
+        wirelessTask = Task { [weak self] in
+            do {
+                let device = try await wirelessADB.connect(endpoint: endpoint)
+                guard let self else { return }
+                guard self.wirelessRequestID == requestID else {
+                    self.finishWirelessOperation(requestID, message: "", isError: false)
+                    return
+                }
+                var refreshedDevices = self.devices.filter { $0.id != device.id }
+                refreshedDevices.append(device)
+                self.devices = refreshedDevices.sorted { $0.id.value < $1.id.value }
+                self.errorMessage = nil
+                self.statusMessage = nil
+                self.applySelectedDevice(device)
+                let hasUSB = device.sessions.contains { $0.connection.kind == .usb }
+                self.finishWirelessOperation(requestID,
+                    message: hasUSB
+                        ? "Connected over Wi-Fi. USB is also active, so Androdo will prefer USB for transfers."
+                        : "Connected over Wi-Fi. Your phone is ready for backup, restore, and file copy.",
+                    isError: false)
+            } catch is CancellationError {
+                self?.finishWirelessOperation(requestID,
+                    message: "Connection check cancelled. ADB may keep an existing paired connection available.",
+                    isError: false)
+                return
+            } catch {
+                self?.finishWirelessOperation(requestID, message: UserFacingError.message(for: error), isError: true)
+            }
+        }
+    }
+
+    /// Cancels the in-progress local ADB command without disconnecting or revoking phone trust.
+    public func cancelWirelessSetupOperation(ownerID: UUID) {
+        guard wirelessOwnerID == ownerID,
+              let task = wirelessTask, let requestID = wirelessRequestID else { return }
+        let wasPairing = isPairingWireless
+        wirelessCancellationID = requestID
+        wirelessRequestID = nil
+        isCancellingWireless = true
+        task.cancel()
+        setWirelessMessage(wasPairing
+            ? "Pairing attempt cancelled. If Android completed it, remove this Mac from the phone’s Paired devices list to revoke trust."
+            : "Connection check cancelled. ADB may keep an existing paired connection available.", isError: false)
+    }
+
+    private func finishWirelessOperation(_ id: UUID, message: String, isError: Bool) {
+        if wirelessRequestID == id {
+            wirelessRequestID = nil
+            wirelessTask = nil
+            wirelessOwnerID = nil
+            isPairingWireless = false
+            isConnectingWireless = false
+            isCancellingWireless = false
+            setWirelessMessage(message, isError: isError)
+        } else if wirelessCancellationID == id {
+            wirelessCancellationID = nil
+            wirelessTask = nil
+            wirelessOwnerID = nil
+            isPairingWireless = false
+            isConnectingWireless = false
+            isCancellingWireless = false
+        }
+    }
+
+    private func setWirelessMessage(_ message: String, isError: Bool) {
+        wirelessSetupMessage = message
+        wirelessSetupMessageIsError = isError
     }
 
     private func invalidatePlansForConnectionChange() {

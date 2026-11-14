@@ -14,8 +14,13 @@ struct PhoneFilesView: View {
         @Bindable var browser = browser
         VStack(spacing: 0) {
             HStack {
-                Label("On \(browser.device?.model ?? "your phone") · USB", systemImage: "cable.connector")
-                    .font(.caption).foregroundStyle(.secondary)
+                if let device = browser.device {
+                    Label("On \(device.model ?? "your phone") · \(connectionSummary)", systemImage: connectionSymbol)
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Label("Phone not connected", systemImage: "cable.connector.slash")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Spacer()
             }.padding(.horizontal, 18).padding(.top, 12)
             RemoteBrowserNavigationBar(browser: browser)
@@ -123,11 +128,6 @@ struct PhoneFilesView: View {
         }
         .navigationTitle("File Explorer")
         .onDisappear { browser.cancelNavigation() }
-        .task {
-            await openSharedStorageWhenReady()
-        }
-        .onChange(of: browser.device?.id) { _, _ in Task { await openSharedStorageWhenReady() } }
-        .onChange(of: browser.device?.state) { _, _ in Task { await openSharedStorageWhenReady() } }
         .sheet(isPresented: $showingADBSetup) { ADBSetupView() }
     }
 
@@ -140,18 +140,28 @@ struct PhoneFilesView: View {
         if let entry = selectedFolder(in: paths) { Task { await browser.open(entry) } }
     }
 
-    private func openSharedStorageWhenReady() async {
-        guard browser.device?.state == .device, !browser.hasOpenedRoot else { return }
-        await browser.openRoot()
+    private var connectionSummary: String {
+        guard let device = browser.device else { return "ADB" }
+        let hasUSB = device.sessions.contains { $0.connection.kind == .usb }
+        let hasWiFi = device.sessions.contains { $0.connection.kind == .wireless }
+        if hasUSB && hasWiFi { return "USB + Wi-Fi" }
+        if hasWiFi { return "Wi-Fi" }
+        if hasUSB { return "USB" }
+        return "ADB"
+    }
+
+    private var connectionSymbol: String {
+        guard let device = browser.device else { return "cable.connector" }
+        return device.preferredSession?.connection.kind == .wireless ? "wifi" : "cable.connector"
     }
 
     private var connectionUnavailableDescription: String {
         guard model.hasADB else { return "Set up ADB on this Mac, then prepare and authorize your phone to browse shared files." }
-        guard let state = browser.device?.state else { return "Connect your phone with a data-capable USB cable, unlock it, and choose Check Again in Connection Setup." }
+        guard let state = browser.device?.state else { return "Connect your phone over USB or choose Wi-Fi in Connection Setup, then choose Check Again." }
         return switch state {
         case .device: "This phone is ready. Open shared storage to browse files."
         case .unauthorized: "Unlock your phone and approve the “Allow USB debugging?” prompt for this Mac."
-        case .offline: "Android lists this phone as offline. Reconnect the cable and unlock the phone."
+        case .offline: "Android lists this phone as offline. Reconnect USB or check Wireless debugging, then refresh the device list."
         case .bootloader, .recovery, .sideload: "Restart Android normally, then choose Check Again in Connection Setup."
         case .unknown: "Check the USB debugging setup on your phone, then choose Check Again."
         }

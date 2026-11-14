@@ -46,7 +46,7 @@ struct AndroidConnectionGuide: View {
             VStack(alignment: .leading, spacing: 7) {
                 Label("Why Androdo needs this", systemImage: "questionmark.circle")
                     .font(.callout.weight(.semibold)).foregroundStyle(AppIdentity.blue)
-                Text("USB debugging gives an authorized computer an ADB command connection to Android. Androdo uses that connection for the file actions you start. Check Again checks connected devices. If File Explorer is already open, Androdo opens the shared-storage root and lists its immediate entries; it doesn’t scan deeper folders. Other contents appear as you navigate or choose a backup scope.")
+                Text("USB debugging gives an authorized computer an ADB command connection to Android. Androdo uses that connection for the file actions you start. Check Again checks connected devices. Connecting a phone never opens its folders; in File Explorer, choose Open Shared Storage when you’re ready to browse. Androdo lists only the current folder’s immediate entries and doesn’t scan deeper folders.")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Text("Authorize only a Mac you trust. You can turn USB debugging off in Android Settings when you’re done using Androdo.")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

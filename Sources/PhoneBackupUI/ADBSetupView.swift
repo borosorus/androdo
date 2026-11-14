@@ -10,16 +10,19 @@ struct ADBSetupView: View {
     @State private var showingFilePicker = false
     @State private var copiedCommand = false
     @State private var acceptsGoogleTerms = false
+    @State private var connectionMethod: ConnectionMethod = .usb
 
     private let homebrewCommand = "brew install --cask android-platform-tools"
     private let downloadPage = URL(string: "https://developer.android.com/tools/releases/platform-tools")!
 
     var body: some View {
-        ReviewSheetLayout(title: "Connect your Android", subtitle: "Set up this Mac, then prepare and authorize your phone.",
+        ReviewSheetLayout(title: "Connect your Android",
+                          subtitle: model.canUseWirelessADB ? "Choose USB or Wi-Fi, then follow the steps for your phone." : "Set up this Mac, then prepare and authorize your phone.",
                           minimumWidth: 620, minimumHeight: 580) {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .top, spacing: 14) {
-                    Image(systemName: "cable.connector").font(.title).foregroundStyle(AppIdentity.teal)
+                    Image(systemName: connectionMethod == .wifi ? "wifi" : "cable.connector")
+                        .font(.title).foregroundStyle(AppIdentity.teal)
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Android Debug Bridge (ADB)").font(.headline)
                         Text("ADB is Google’s connection tool. Androdo uses it to transfer the files you choose; Android Studio is not required.")
@@ -53,8 +56,21 @@ struct ADBSetupView: View {
                     platformToolsSetup
                 }
 
-                AndroidConnectionGuide(hasADB: model.hasADB, deviceState: model.connectionGuideDeviceState,
-                                       discoveryIssue: model.connectionGuideDiscoveryIssue)
+                if model.canUseWirelessADB {
+                    Picker("Connection method", selection: $connectionMethod) {
+                        Label("USB", systemImage: "cable.connector").tag(ConnectionMethod.usb)
+                        Label("Wi-Fi", systemImage: "wifi").tag(ConnectionMethod.wifi)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel("Connection method")
+                }
+
+                if connectionMethod == .wifi && model.canUseWirelessADB {
+                    AndroidWirelessSetupView()
+                } else {
+                    AndroidConnectionGuide(hasADB: model.hasADB, deviceState: model.connectionGuideDeviceState,
+                                           discoveryIssue: model.connectionGuideDiscoveryIssue)
+                }
 
                 if model.hasADB {
                     DisclosureGroup("Install or switch Platform Tools") {
@@ -143,5 +159,10 @@ struct ADBSetupView: View {
                 }.padding(.top, 8)
             }
         }
+    }
+
+    private enum ConnectionMethod: Hashable {
+        case usb
+        case wifi
     }
 }

@@ -28,6 +28,22 @@ checks, copied into the app, or committed.
 - [ ] Check the guide’s status copy with no phone, an unauthorized phone, an
       offline phone, and an authorized phone. Opening the guide must not run
       device discovery or browse folders.
+- [ ] With ADB installed, verify Connection Setup has distinct USB and Wi-Fi
+      guides. Pairing uses the phone’s temporary pairing endpoint and code;
+      connecting uses the separate Wireless debugging endpoint and works for an
+      already-paired phone without a code.
+- [ ] Verify the Wi-Fi guide explains same-network setup, persistent pairing
+      and revocation, and that Androdo does not run its own network scan. Confirm
+      the bundle declares Local Network access and the ADB mDNS service types.
+- [ ] On macOS 15 or later, allow Androdo on a fresh Local Network prompt. Also try a denied
+      permission and confirm the guide points to System Settings → Privacy &
+      Security → Local Network without treating every timeout as a denial.
+- [ ] Pair/connect without opening File Explorer. Confirm no folder listing or
+      phone-content command runs during pairing or identity verification. Then
+      open File Explorer and verify **Open Shared Storage** is explicit.
+- [ ] If USB and Wi-Fi are both active for one phone, confirm Androdo shows one
+      device and indicates USB is preferred; unplug USB and refresh to verify
+      the wireless route remains selected.
 - [ ] In File Explorer with no authorized phone, verify Connection Setup opens
       the same in-app guide and the direct Developer options link opens Google’s
       documentation.

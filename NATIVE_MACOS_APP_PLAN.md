@@ -41,7 +41,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 8.12 — Add foreground/background progress across preparation and transfers. Commit: `feat(ui): add foreground and background operation progress`. Review: approved after window and phone-sheet lifetime fixes.
 - [x] Step 8.16 — Separate durable Android identity from USB/Wi-Fi ADB routes. Commit: `refactor(adb): separate device identity from connection routing`. Review: approved; manual USB/Wi-Fi continuity check remains for wireless acceptance.
 - [x] Step 8.17 — Add the ADB wireless pairing service. Commit: `feat(adb): add wireless pairing service`. Review: approved after tightening pair/connect response matching, isolating ADB environment overrides, verifying only the requested endpoint, and preserving session state on cancellation.
-- [ ] Step 8.18 — Add explicit wireless setup UI and macOS Local Network privacy. Commit: `feat(adb): add explicit wireless pairing and connection`.
+- [x] Step 8.18 — Add explicit wireless setup UI and macOS Local Network privacy. Commit: `feat(adb): add explicit wireless pairing and connection`. Review: approved; Local Network permission and real-device checks remain pending.
 - [ ] Step 9 — Complete packaging, CI, and end-to-end acceptance. Local packaging and CI committed as `build(macOS): package app and add acceptance checks`; reviewer approved. Phone acceptance remains pending an explicitly selected disposable folder.
 
 ## Steps
@@ -318,13 +318,17 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 ### Step 8.18 — Add wireless setup UI and macOS network privacy
 
-**Deliverable:** Add an Android 11+ pairing-code flow with separate Pair and Connect actions, explicit retry/cancel behavior, and actionable Android/ADB/network errors. Explain same-network and Developer options prerequisites, persistent pairing/revocation on Android, and macOS Local Network permission. Add the required privacy description and verify whether the bundled/helper ADB mDNS behavior requires Bonjour declarations. Do not implement app-level LAN scans or Bonjour browsing; explain that ADB itself may auto-discover and reconnect paired devices. Correct USB-only labels throughout the connection UI.
+**Deliverable:** Add an Android 11+ pairing-code flow with separate Pair and Connect actions, explicit retry/cancel behavior, and actionable Android/ADB/network errors. Explain same-network and Developer options prerequisites, persistent pairing/revocation on Android, and macOS Local Network permission. Add the required privacy description and ADB mDNS Bonjour declarations. Do not implement app-level LAN scans or Bonjour browsing; explain that ADB itself may auto-discover and reconnect paired devices. Correct USB-only labels throughout the connection UI and make opening shared phone storage explicit.
 
 **Commit:** `feat(adb): add explicit wireless pairing and connection`.
 
-**Automated acceptance:** Fake model/UI fixtures cover busy-state guards, cancellation/dismissal, stale completion, ADB replacement, verified endpoint selection among multiple devices, and connection refresh without folder reads.
+**Automated acceptance:** Fake model/UI fixtures cover busy-state guards, cancellation and stale completion, owner-isolated cancellation, ADB replacement guards, refresh serialization, verified endpoint selection, and no folder reads during setup. Core fixtures verify exact endpoint selection among multiple ADB devices.
 
 **Review/acceptance:** Reviewer checks local-network privacy metadata/copy and operation lifecycle. Manual acceptance covers fresh/denied Local Network permission, pairing, reconnect, USB/Wi-Fi coexistence, route loss and retry, and identity continuity using only a user-selected disposable folder for file operations. No phone content is read during pairing or identity checks.
+
+**Implementation complete:** Connection Setup now has separate USB and Wi-Fi guides; Wi-Fi pairing and connection use distinct address/port inputs, secure transient code entry, explicit cancellation, and owner-scoped tasks. Verified wireless results select only the connected phone; refresh is serialized against active wireless work. Device and File Explorer labels reflect USB/Wi-Fi routes, and File Explorer requires **Open Shared Storage** before listing folders. The app bundle declares the Local Network usage string and ADB Bonjour service types, which the build script verifies. `WirelessSetupTests` passed 3/3, `ADBWirelessServiceTests` passed 7/7, and `ADBTransportTests` passed 39/39 using synthetic devices/local commands only. `macos/Info.plist` validation and the ad-hoc app bundle build passed. Reviewer approved after fixes for cancellation races, stale discovery/status, multi-window task ownership, and field clearing.
+
+**Validation note:** The broader `swift test --filter PhoneBackupUITests` run compiled but produced no test output for over a minute; it was interrupted. The targeted wireless and transport suites passed, but the rest of the UI suite has not been verified in this turn. No phone was connected or browsed; manual Local Network and device acceptance remain open.
 
 ### Step 9 — Packaging and end-to-end acceptance
 

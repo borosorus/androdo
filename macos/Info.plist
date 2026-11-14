@@ -27,6 +27,14 @@
 	<string>14.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Androdo uses your local network to pair and connect to Android phones with ADB over Wi-Fi. ADB may automatically discover or reconnect to phones already paired with this Mac.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_adb._tcp</string>
+		<string>_adb-tls-pairing._tcp</string>
+		<string>_adb-tls-connect._tcp</string>
+	</array>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>
