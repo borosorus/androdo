@@ -22,9 +22,20 @@ public struct MainWindow: View {
                     Label { Text("Saved Backups") } icon: { SidebarGlyph(symbol: "externaldrive.fill", color: AppIdentity.copper) }.tag(AppSection.backups)
                 }
                 Section("Phone") {
-                    Label { Text("Phone Files") } icon: { SidebarGlyph(symbol: "folder.fill", color: AppIdentity.blue) }.tag(AppSection.files)
+                    Label { Text("File Explorer") } icon: { SidebarGlyph(symbol: "folder.fill", color: AppIdentity.blue) }.tag(AppSection.files)
                 }
                 Section {
+                    HStack {
+                        Text("Connected devices").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                        Button { Task { await model.refreshDevices() } } label: {
+                            Image(systemName: "arrow.clockwise").frame(width: 28, height: 28)
+                        }
+                        .buttonStyle(.borderless).disabled(model.isBusy || !model.hasADB)
+                        .help("Refresh connected devices").accessibilityLabel("Refresh connected devices")
+                        Spacer(minLength: 8)
+                    }
+                    .padding(.top, 6)
+                    .selectionDisabled()
                     if model.devices.isEmpty {
                         Label(model.hasADB ? "Not connected" : "Connection setup needed", systemImage: "cable.connector.slash")
                             .font(.callout).foregroundStyle(.secondary)
@@ -40,28 +51,21 @@ public struct MainWindow: View {
                         .disabled(model.isBusy)
                         .accessibilityLabel("Select \(device.model ?? "Android device") \(device.id.serial)")
                     }
-                } header: {
-                    HStack {
-                        Text("Connected devices")
-                        Spacer()
-                        Button { Task { await model.refreshDevices() } } label: { Image(systemName: "arrow.clockwise") }
-                            .buttonStyle(.borderless).disabled(model.isBusy || !model.hasADB)
-                            .help("Refresh connected devices").accessibilityLabel("Refresh connected devices")
-                    }
                 }
             }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 320)
             .safeAreaInset(edge: .bottom) {
-                HStack {
+                VStack(spacing: 10) {
                     if !model.hasADB {
                         Button("Set Up Connection…") { showingADBSetup = true }.disabled(model.isBusy)
-                    } else {
-                        SettingsLink { Label("Settings", systemImage: "gearshape") }
                     }
-                    Spacer()
+                    SettingsLink {
+                        Label("Settings…", systemImage: "gearshape")
+                            .frame(maxWidth: .infinity)
+                    }
                 }
-                .font(.callout).buttonStyle(.borderless)
+                .buttonStyle(.bordered).controlSize(.large)
                 .padding(14)
             }
         } detail: {

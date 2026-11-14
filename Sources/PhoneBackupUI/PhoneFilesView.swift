@@ -110,7 +110,7 @@ struct PhoneFilesView: View {
             receiveFinderFiles(providers, destination: browser.currentDirectory,
                                expectedDirectory: browser.currentDirectory)
         }
-        .navigationTitle("Phone Files")
+        .navigationTitle("File Explorer")
         .onDisappear { browser.cancelNavigation() }
         .task {
             await openSharedStorageWhenReady()

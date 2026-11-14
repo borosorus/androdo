@@ -36,6 +36,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 8.7 — Coordinate live folder navigation and selection. Commit: `fix(files): coordinate live folder navigation and selection`. Review: approved after cache/cancellation/error fixes.
 - [x] Step 8.8 — Simplify current-phone backup scope selection. Commit: `feat(backups): simplify phone backup scope selection`. Review: approved after immutable phone/session capture.
 - [x] Step 8.9 — Separate saved backups from live phone files and make Recent Operations secondary. Commit: `refactor(ui): distinguish saved backups from live phone files`. Review: approved.
+- [x] Step 8.10 — Stabilize connected-device refresh, expose Settings and rename File Explorer. Commit: `fix(ui): stabilize sidebar controls and expose settings`. Review: approved.
 - [ ] Step 9 — Complete packaging, CI, and end-to-end acceptance. Local packaging and CI committed as `build(macOS): package app and add acceptance checks`; reviewer approved. Phone acceptance remains pending an explicitly selected disposable folder.
 
 ## Steps
@@ -232,6 +233,16 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 **8.8 complete:** Replaced the current-phone scope checkbox tree with a native browser/table, explicit Include/Exclude actions and an included/excluded scope tray. Mode changes preserve custom roots/exclusions. Draft edits stay local until Done; an immutable presentation session plus retained original device prevent retargeting a draft after phone changes. Added guarded application and tests for scope semantics, persistence, stale phone rejection and shallow browsing. Swift tests passed (69 core + 43 UI-model); native fictional compact picker capture inspected; reviewer approved after fixing presentation identity.
 
 **8.9 complete:** Grouped Saved Backups separately from Phone Files, added saved/live provenance, moved Activity into a Recent Operations toolbar sheet, retained safe warning summaries, and distinguished loading/error/empty saved-file states with request-scoped stale success/error guards. Removed duplicate tree indentation and redundant Overview completion banners. Swift tests passed (69 core + 46 UI-model); reviewer approved. Native fictional compact Phone Files, Saved Backups, completed backup and light/dark scope-picker captures inspected. Final app bundle built and ad-hoc signature verified. Actual device latency, Finder interaction and keyboard/VoiceOver remain manual acceptance; no real phone folders or user backups were accessed for this work. The transport already issues one shallow find command per listing and supports process cancellation; fixes belong primarily in request coordination and interaction/state handling.
+
+### Steps 8.10–8.11 — Sidebar controls and batch restore
+
+**Planner-approved plan:**
+1. **8.10** Put device refresh in a stable, padded sidebar row, make Settings a visible footer button even before connection setup, and rename Phone Files to File Explorer. Commit: `fix(ui): stabilize sidebar controls and expose settings`. Check native compact/light/dark fixtures; reviewer before commit.
+2. **8.11** Choose destination and conflict policy before planning; show cancellable verification/destination progress and one batch review. Remove automatic one-path restore replans. Batch exact-path destination metadata by depth with fresh preflight/start snapshots, rejecting unsafe ancestors before descending; retain publication identity/ancestor checks and deduplicate content verification. Commit: `fix(restore): plan and approve phone restores as a batch`. Check fake multi-file replacement, changed/missing identity, unsafe paths, batching/quoting/malformed metadata, cancellation/stale results and no automatic retry; full Swift suite and reviewer before commit.
+
+**Privacy:** Fixtures only; no phone folders, user repositories, or standard preferences. Step 9 real-device acceptance remains open.
+
+**8.10 complete:** Device refresh now sits beside its label in a regular sidebar row with a fixed hit target and trailing space. Settings is a full-width native footer button and remains available before ADB setup. Sidebar and navigation title use File Explorer. Reviewer approved; compact native light/dark fixtures inspected, Swift suite passed (77 core + 49 UI-model), and whitespace/shell checks passed.
 
 ### Step 9 — Packaging and end-to-end acceptance
 
