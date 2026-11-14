@@ -27,11 +27,14 @@ public struct CommandInputGate: Equatable, Sendable {
 /// Optional file-backed standard streams for large binary transfers.
 public struct CommandFileIO: Equatable, Sendable {
     public let inputFile: URL?
+    public let inputData: Data?
     public let outputFile: URL?
     public let inputGate: CommandInputGate?
 
-    public init(inputFile: URL? = nil, outputFile: URL? = nil, inputGate: CommandInputGate? = nil) {
+    public init(inputFile: URL? = nil, inputData: Data? = nil,
+                outputFile: URL? = nil, inputGate: CommandInputGate? = nil) {
         self.inputFile = inputFile
+        self.inputData = inputData
         self.outputFile = outputFile
         self.inputGate = inputGate
     }
@@ -58,7 +61,15 @@ public extension CommandRunning {
 /// Runs local ADB processes off the caller's actor. File transfers stream through private file
 /// descriptors; upload bytes are withheld until the remote identity guard sends its readiness frame.
 public struct ProcessCommandRunner: CommandRunning {
-    public init() {}
+    private let environment: [String: String]
+
+    public init() {
+        environment = ProcessInfo.processInfo.environment
+    }
+
+    init(environment: [String: String]) {
+        self.environment = environment
+    }
 
     public func run(executable: URL, arguments: [String], timeout: TimeInterval) async throws -> CommandOutput {
         try await run(executable: executable, arguments: arguments, timeout: timeout, fileIO: .none)
@@ -69,7 +80,8 @@ public struct ProcessCommandRunner: CommandRunning {
         let execution = ProcessExecution()
         return try await withTaskCancellationHandler {
             try await Task.detached(priority: .utility) {
-                try execution.run(executable: executable, arguments: arguments, timeout: timeout, fileIO: fileIO)
+                try execution.run(executable: executable, arguments: arguments, timeout: timeout,
+                                  fileIO: fileIO, environment: environment)
             }.value
         } onCancel: {
             execution.cancel()
@@ -91,8 +103,13 @@ private final class ProcessExecution: @unchecked Sendable {
     }
 
     func run(executable: URL, arguments: [String], timeout: TimeInterval,
-             fileIO: CommandFileIO) throws -> CommandOutput {
-        guard timeout > 0, fileIO.inputGate == nil || fileIO.inputFile != nil && fileIO.outputFile == nil else {
+             fileIO: CommandFileIO, environment: [String: String]) throws -> CommandOutput {
+        let hasInputFile = fileIO.inputFile != nil
+        let hasInputData = fileIO.inputData != nil
+        guard timeout > 0,
+              !(hasInputFile && hasInputData),
+              fileIO.inputData.map({ $0.count <= 4096 }) ?? true,
+              fileIO.inputGate == nil || hasInputFile && !hasInputData && fileIO.outputFile == nil else {
             throw EngineError.transport("Invalid ADB file transfer configuration")
         }
 
@@ -108,12 +125,20 @@ private final class ProcessExecution: @unchecked Sendable {
             }
         }
 
-        let inputPipe = inputDescriptor >= 0 ? Pipe() : nil
+        let inputPipe = inputDescriptor >= 0 || hasInputData ? Pipe() : nil
         let outputPipe = outputDescriptor < 0 ? Pipe() : nil
         let errorPipe = Pipe()
         let subprocess = Process()
         subprocess.executableURL = executable
         subprocess.arguments = arguments
+        var subprocessEnvironment = environment
+        // ADB_TRACE and Android logging can expose the host:pair service request, which includes
+        // the pairing secret. Server overrides could route it to a remote ADB server.
+        for key in ["ADB_TRACE", "ANDROID_LOG_TAGS", "ADB_SERVER_SOCKET",
+                    "ANDROID_ADB_SERVER_ADDRESS", "ANDROID_ADB_SERVER_PORT"] {
+            subprocessEnvironment.removeValue(forKey: key)
+        }
+        subprocess.environment = subprocessEnvironment
         subprocess.standardInput = inputPipe ?? FileHandle.nullDevice
         subprocess.standardOutput = outputDescriptor >= 0
             ? FileHandle(fileDescriptor: outputDescriptor, closeOnDealloc: false)
@@ -127,10 +152,12 @@ private final class ProcessExecution: @unchecked Sendable {
         if alreadyCancelled { clearProcess(); throw CancellationError() }
 
         let outputReader = outputPipe.map {
-            ProcessOutputReader(handle: $0.fileHandleForReading, maximumBytes: fileIO.inputGate == nil ? nil : 4096)
+            ProcessOutputReader(handle: $0.fileHandleForReading,
+                                maximumBytes: fileIO.inputGate == nil && !hasInputData ? nil : 4096)
         }
         let errorReader = ProcessOutputReader(handle: errorPipe.fileHandleForReading,
-                                              maximumBytes: fileIO.inputFile == nil && fileIO.outputFile == nil ? nil : 64 * 1024)
+                                              maximumBytes: fileIO.inputFile == nil && !hasInputData && fileIO.outputFile == nil
+                                                ? nil : 64 * 1024)
         do {
             try subprocess.run()
         } catch {
@@ -147,7 +174,14 @@ private final class ProcessExecution: @unchecked Sendable {
         let deadline = Date().addingTimeInterval(timeout)
 
         do {
-            if inputDescriptor >= 0 {
+            if let inputData = fileIO.inputData {
+                let writer = inputPipe!.fileHandleForWriting
+                if !inputData.isEmpty {
+                    try Self.write(inputData, to: writer.fileDescriptor, process: subprocess,
+                                   deadline: deadline, isCancelled: { self.isCancelled })
+                }
+                try? writer.close()
+            } else if inputDescriptor >= 0 {
                 let writer = inputPipe!.fileHandleForWriting
                 if let gate = fileIO.inputGate {
                     guard let outputReader,

@@ -175,6 +175,86 @@ public actor ADBTransport: DeviceTransport, RemoteDestinationAccess {
         return DeviceDiscoveryResult(devices: devices, issues: issues)
     }
 
+    func verifiedWirelessDevice(at endpoint: ADBWirelessEndpoint) async throws -> AndroidDevice? {
+        try Task.checkCancellation()
+        let output = try await rawCommand(["devices", "-l"])
+        guard output.exitCode == 0 else { return nil }
+
+        var routes: [Int: (selector: String, state: DeviceState, attributes: [String: String])] = [:]
+        for line in String(decoding: output.data, as: UTF8.self).split(whereSeparator: \.isNewline) {
+            guard !line.starts(with: "List of devices attached") else { continue }
+            let columns = line.split(whereSeparator: \.isWhitespace)
+            guard columns.count >= 2,
+                  let state = Self.deviceState(String(columns[1])),
+                  let transportID = columns.dropFirst(2).compactMap({ column -> Int? in
+                      let field = column.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+                      return field.count == 2 && field[0] == "transport_id" ? Int(field[1]) : nil
+                  }).first, transportID > 0 else { continue }
+            let attributes = columns.dropFirst(2).reduce(into: [String: String]()) { result, column in
+                let field = column.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+                if field.count == 2 { result[String(field[0])] = String(field[1]) }
+            }
+            routes[transportID] = (String(columns[0]), state, attributes)
+        }
+
+        guard let (transportID, route) = routes.first(where: {
+            $0.value.selector == endpoint.adbArgument && $0.value.state == .device
+        }) else { return nil }
+
+        let identityOutput = try await rawCommand(["-t", String(transportID), "shell", Self.identityProbe])
+        guard identityOutput.exitCode == 0,
+              let evidence = try? DeviceIdentityEvidence.parse(identityOutput.data) else { return nil }
+        guard try await connectionKind(transportID: transportID) == .wireless,
+              try await supportsGuardedTransfers(transportID: transportID, evidence: evidence) else { return nil }
+
+        let deviceID = evidence.deviceID
+        try Task.checkCancellation()
+
+        // Build the replacement from current actor state only after every async probe succeeds.
+        // This avoids partially pruning session caches if probing is cancelled or fails.
+        let candidateSessions = activeSessions.filter { _, session in
+            guard let activeRoute = routes[session.connection.transportID] else { return false }
+            return activeRoute.state == .device && activeRoute.selector == session.connection.selector
+        }
+        let currentSessions = Array(candidateSessions.values)
+        let reusableTargetSession = currentSessions.first {
+            $0.deviceID == deviceID && $0.identityEvidence == evidence
+                && $0.connection.kind == .wireless && $0.connection.transportID == transportID
+                && $0.connection.selector == endpoint.adbArgument
+        }
+        let priorSessions = currentSessions.filter {
+            $0.connection.transportID != transportID
+                && $0.connection.selector != endpoint.adbArgument
+                && $0.deviceID == deviceID && $0.identityEvidence == evidence
+        }
+        let session = reusableTargetSession ?? DeviceSession(
+            deviceID: deviceID,
+            connection: ADBConnectionSession(kind: .wireless, transportID: transportID,
+                                             selector: endpoint.adbArgument),
+            identityEvidence: evidence
+        )
+        var nextSessions = candidateSessions.filter {
+            $0.value.connection.transportID != transportID
+                && $0.value.connection.selector != endpoint.adbArgument
+        }
+        nextSessions[session.connection.generation] = session
+
+        let sessions = (priorSessions + [session]).reduce(into: [UUID: DeviceSession]()) {
+            $0[$1.connection.generation] = $1
+        }.values.sorted { lhs, rhs in
+            if lhs.connection.kind == .usb { return true }
+            if rhs.connection.kind == .usb { return false }
+            return lhs.connection.transportID < rhs.connection.transportID
+        }
+
+        try Task.checkCancellation()
+        activeSessions = nextSessions
+        findPrintfSupport = findPrintfSupport.filter { nextSessions[$0.key] != nil }
+
+        return AndroidDevice(id: deviceID, state: .device, model: evidence.model,
+                             product: route.attributes["product"], sessions: sessions)
+    }
+
     private static let identityMismatchMarker = "ANDRODO_DEVICE_IDENTITY_MISMATCH"
     private static let identityProbe = "printf '%s\\000%s\\000%s\\000' \"$(getprop ro.serialno)\" \"$(getprop ro.product.manufacturer)\" \"$(getprop ro.product.model)\""
     private static let shellV2ProbeExitCode: Int32 = 73

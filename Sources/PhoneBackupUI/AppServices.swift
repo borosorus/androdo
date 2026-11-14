@@ -9,6 +9,7 @@ public struct AppServices {
     public let remoteDestinationAccess: (any RemoteDestinationAccess)?
     public let backupEngine: (any BackupEngine)?
     public let copyEngine: (any CopyEngine)?
+    public let wirelessADB: (any WirelessADBConnecting)?
     public let adbExecutable: URL?
 
     public init(repositoryStore: any BackupRepositoryWriting,
@@ -18,6 +19,7 @@ public struct AppServices {
                 backupEngine: (any BackupEngine)? = nil,
                 copyEngine: (any CopyEngine)? = nil,
                 restoreEngine: (any RestoreEngine)? = nil,
+                wirelessADB: (any WirelessADBConnecting)? = nil,
                 adbExecutable: URL? = nil) {
         self.repositoryStore = repositoryStore
         self.deviceTransport = deviceTransport
@@ -26,6 +28,7 @@ public struct AppServices {
         self.backupEngine = backupEngine
         self.copyEngine = copyEngine
         self.restoreEngine = restoreEngine ?? DefaultRestoreEngine(repositoryStore: repositoryStore, remote: remoteDestinationAccess)
+        self.wirelessADB = wirelessADB
         self.adbExecutable = adbExecutable
     }
 
@@ -37,12 +40,15 @@ public struct AppServices {
               let configuration = try? ADBConfiguration(executable: adbURL) else {
             return AppServices(repositoryStore: store)
         }
-        let transport = ADBTransport(configuration: configuration)
+        let runner = ProcessCommandRunner()
+        let transport = ADBTransport(configuration: configuration, runner: runner)
+        let wirelessADB = ADBWirelessService(configuration: configuration, runner: runner, transport: transport)
         let backup = DefaultBackupEngine(remote: transport, repositoryStore: store)
         let copy = DefaultCopyEngine(remote: transport, repositories: store)
         return AppServices(repositoryStore: store, deviceTransport: transport, remoteAccess: transport,
                            remoteDestinationAccess: transport,
-                           backupEngine: backup, copyEngine: copy, adbExecutable: adbURL)
+                           backupEngine: backup, copyEngine: copy, wirelessADB: wirelessADB,
+                           adbExecutable: adbURL)
     }
 
     public func usingADB(at executable: URL) -> AppServices {

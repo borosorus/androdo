@@ -608,6 +608,49 @@ final class ADBTransportTests: XCTestCase {
         XCTAssertEqual(output.exitCode, 73)
     }
 
+    func testProcessRunnerWritesBoundedMemoryInputToStandardInput() async throws {
+        let code = "123456"
+        let arguments = ["-c", "IFS= read -r value || exit 9; test ${#value} -eq 6 && printf accepted"]
+        let output = try await ProcessCommandRunner().run(
+            executable: URL(fileURLWithPath: "/bin/sh"), arguments: arguments, timeout: 2,
+            fileIO: CommandFileIO(inputData: Data((code + "\n").utf8))
+        )
+        XCTAssertEqual(output.exitCode, 0)
+        XCTAssertEqual(output.data, Data("accepted".utf8))
+        XCTAssertFalse(arguments.contains(code))
+
+        let boundedOutput = try await ProcessCommandRunner().run(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "cat >/dev/null; /usr/bin/head -c 8192 /dev/zero"], timeout: 2,
+            fileIO: CommandFileIO(inputData: Data("end-of-input\n".utf8))
+        )
+        XCTAssertEqual(boundedOutput.exitCode, 0)
+        XCTAssertEqual(boundedOutput.data.count, 4096)
+        do {
+            _ = try await ProcessCommandRunner().run(
+                executable: URL(fileURLWithPath: "/bin/cat"), arguments: [], timeout: 2,
+                fileIO: CommandFileIO(inputData: Data(repeating: 1, count: 4097))
+            )
+            XCTFail("In-memory command input must be bounded")
+        } catch let error as EngineError {
+            XCTAssertEqual(error, .transport("Invalid ADB file transfer configuration"))
+        }
+    }
+
+    func testProcessRunnerStripsADBTraceAndRemoteServerOverrides() async throws {
+        let output = try await ProcessCommandRunner(environment: [
+            "ADB_TRACE": "all", "ANDROID_LOG_TAGS": "*:D",
+            "ADB_SERVER_SOCKET": "tcp:192.0.2.10:5037",
+            "ANDROID_ADB_SERVER_ADDRESS": "192.0.2.10", "ANDROID_ADB_SERVER_PORT": "5038",
+        ]).run(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "test -z \"${ADB_TRACE-}\" && test -z \"${ANDROID_LOG_TAGS-}\" && test -z \"${ADB_SERVER_SOCKET-}\" && test -z \"${ANDROID_ADB_SERVER_ADDRESS-}\" && test -z \"${ANDROID_ADB_SERVER_PORT-}\" && printf clean"], timeout: 2,
+            fileIO: CommandFileIO(inputData: Data())
+        )
+        XCTAssertEqual(output.exitCode, 0)
+        XCTAssertEqual(output.data, Data("clean".utf8))
+    }
+
     func testProcessRunnerRejectsFIFOAsUploadSource() async throws {
         let fifo = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         XCTAssertEqual(fifo.path.withCString { Darwin.mkfifo($0, S_IRUSR | S_IWUSR) }, 0)

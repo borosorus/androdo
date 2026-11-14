@@ -40,6 +40,8 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 8.11 — Plan phone restores with progress, explicit conflict handling and one batch review. Commit: `fix(restore): plan and approve phone restores as a batch`. Review: approved after policy, lookup and sheet-lifecycle fixes.
 - [x] Step 8.12 — Add foreground/background progress across preparation and transfers. Commit: `feat(ui): add foreground and background operation progress`. Review: approved after window and phone-sheet lifetime fixes.
 - [x] Step 8.16 — Separate durable Android identity from USB/Wi-Fi ADB routes. Commit: `refactor(adb): separate device identity from connection routing`. Review: approved; manual USB/Wi-Fi continuity check remains for wireless acceptance.
+- [x] Step 8.17 — Add the ADB wireless pairing service. Commit: `feat(adb): add wireless pairing service`. Review: approved after tightening pair/connect response matching, isolating ADB environment overrides, verifying only the requested endpoint, and preserving session state on cancellation.
+- [ ] Step 8.18 — Add explicit wireless setup UI and macOS Local Network privacy. Commit: `feat(adb): add explicit wireless pairing and connection`.
 - [ ] Step 9 — Complete packaging, CI, and end-to-end acceptance. Local packaging and CI committed as `build(macOS): package app and add acceptance checks`; reviewer approved. Phone acceptance remains pending an explicitly selected disposable folder.
 
 ## Steps
@@ -302,13 +304,17 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 ### Step 8.17 — Add the wireless ADB pairing service
 
-**Deliverable:** Add a core wireless pairing/connection service, separate pairing and connection endpoints, input-capable bounded command execution, ADB capability detection, requested-endpoint verification, cancellation, and structured actionable errors. Keep the pairing code out of command arguments, preferences, Activity, errors, and diagnostics. An already paired device can be connected directly without repeating pairing. This service has no UI or automatic LAN scan.
+**Deliverable:** Add a core wireless pairing/connection service, separate pairing and connection endpoints, input-capable bounded command execution, ADB capability detection, requested-endpoint verification, cancellation, and structured actionable errors. Keep the pairing code out of command arguments, preferences, Activity, and Androdo diagnostics. An already paired device can be connected directly without repeating pairing. This service has no UI or automatic LAN scan.
 
 **Commit:** `feat(adb): add wireless pairing service`.
 
-**Automated acceptance:** Fake-runner fixtures cover endpoint/code validation, unsupported ADB, successful pairing/connection, wrong or expired code, cancellation and timeout, command-output/exit-status disagreement, unverified endpoints, and proof that pairing codes are neither arguments nor persisted. No fixture may invoke a connected device.
+**Automated acceptance:** Fake-runner fixtures cover endpoint/code validation, unsupported ADB, successful pairing/connection, wrong or expired code, cancellation and timeout, command-output/exit-status disagreement, unverified endpoints, exact endpoint probing among multiple phones, stale USB removal, and proof that pairing codes are neither arguments nor persisted. No fixture may invoke a connected device.
 
 **Review/acceptance:** Reviewer checks that pairing never kills the shared ADB server or disconnects unrelated devices, and that transport identity is verified before the connection is exposed to backup/copy/restore.
+
+**Implementation complete:** ADB pairing sends the six-digit code on bounded stdin, validates the matching ADB response, and reports only structured redacted errors. Connection selects the entered endpoint, verifies its transport identity and guarded-transfer support, and keeps other live routes. Process-launched ADB strips trace/log and remote-server overrides; the service never restarts or disconnects the shared ADB server. `ADBWirelessServiceTests` passed 7/7 and `ADBTransportTests` passed 39/39 using fake runners/local processes only; `git diff --check` passed. Reviewer approved after fixes for malformed success output, exact transport probing, transactional session updates, and an unplugged-USB-to-Wi-Fi regression.
+
+**Privacy boundary:** Androdo’s child ADB process has trace/log variables removed and the pairing code is not passed in argv or written to a file. Androdo cannot inspect or change tracing on an ADB server already started by another process; its logging behavior remains outside this app’s control.
 
 ### Step 8.18 — Add wireless setup UI and macOS network privacy
 
