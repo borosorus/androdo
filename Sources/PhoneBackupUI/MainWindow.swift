@@ -4,10 +4,11 @@ import SwiftUI
 
 public struct MainWindow: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showingADBSetup = false
     @State private var showingRecentOperations = false
-    @State private var showingOmissionConfirmation = false
 
     public init(initialColumnVisibility: NavigationSplitViewVisibility = .all) {
         _columnVisibility = State(initialValue: initialColumnVisibility)
@@ -80,16 +81,10 @@ public struct MainWindow: View {
             .background(Color(nsColor: .windowBackgroundColor))
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if showsOperationStatus {
-                    OperationStatusView(showingOmissionConfirmation: $showingOmissionConfirmation)
+                    OperationStatusView()
                         .padding(14)
                         .background(.bar)
                 }
-            }
-            .confirmationDialog("Finish this backup with skipped paths?", isPresented: $showingOmissionConfirmation, titleVisibility: .visible) {
-                Button("Finish with omissions", role: .destructive) { Task { await model.finishBackupWithOmissions() } }
-                Button("Keep incomplete", role: .cancel) {}
-            } message: {
-                Text("The restore point will be marked incomplete and will list the paths that could not be saved.")
             }
         }
         .background {
@@ -113,6 +108,15 @@ public struct MainWindow: View {
             LocalExportReviewSheet()
         }
         .sheet(isPresented: $model.isShowingCopyReview) { CopyReviewSheet() }
+        .sheet(isPresented: Binding(get: {
+            model.isShowingPhoneRestoreSetup || (model.isShowingExportReview && model.restoreTargetIsPhone)
+        }, set: { visible in
+            if !visible {
+                model.isShowingPhoneRestoreSetup = false
+            }
+        })) {
+            PhoneRestoreDestinationSheet(reviewPlanID: model.isShowingExportReview ? model.restorePlan?.id : nil)
+        }
         .alert(PhoneBackupCore.applicationName, isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.clearStatus() } }
@@ -123,10 +127,14 @@ public struct MainWindow: View {
         }
         .sheet(isPresented: $showingADBSetup) { ADBSetupView() }
         .sheet(isPresented: $showingRecentOperations) { RecentOperationsSheet() }
+        .onChange(of: model.progressSession?.presentationID, initial: true) { _, id in
+            if id != nil { openWindow(id: OperationProgressScene.windowID) }
+            else { dismissWindow(id: OperationProgressScene.windowID) }
+        }
     }
 
     private var showsOperationStatus: Bool {
-        model.isOperationRunning || model.recoveryAttempt != nil || model.operationEvent != nil || !model.pendingAttempts.isEmpty
+        model.progressSession != nil || model.isOperationRunning || model.recoveryAttempt != nil || model.operationEvent != nil || !model.pendingAttempts.isEmpty
     }
 }
 private struct DeviceSidebarRow: View {

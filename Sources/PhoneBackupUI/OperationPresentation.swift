@@ -1,12 +1,18 @@
 import PhoneBackupCore
 
-public enum OperationKind: Sendable { case backup, restore, export, copy }
+public enum OperationKind: Sendable, Equatable { case backup, restore, export, copy }
 
 /// Presentation identity survives completion; cancellation state remains owned by AppModel.
 struct OperationPresentation: Equatable {
     let title: String
     let symbol: String
     let phase: String
+
+    init(title: String, symbol: String, phase: String) {
+        self.title = title
+        self.symbol = symbol
+        self.phase = phase
+    }
 
     init(kind: OperationKind?, event: OperationEvent?, isRunning: Bool,
          recovery: BackupAttempt?, pendingCount: Int) {

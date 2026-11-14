@@ -10,14 +10,19 @@ public struct PhoneRestoreDestinationSheet: View {
     @State private var selectedFolder: RemotePath?
     @State private var policy: PhoneRestoreConflictPolicy?
     @State private var showingReview = false
+    @State private var reviewedPlanID: RestorePlanID?
 
-    public init() {}
+    public init(reviewPlanID: RestorePlanID? = nil) {
+        _reviewedPlanID = State(initialValue: reviewPlanID)
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
             if showingReview {
                 LocalExportReviewSheet(backToSetup: {
                     showingReview = false
+                    reviewedPlanID = nil
+                    model.isShowingPhoneRestoreSetup = true
                     model.cancelExportReview()
                 })
             } else {
@@ -26,12 +31,18 @@ public struct PhoneRestoreDestinationSheet: View {
         }
         .interactiveDismissDisabled(model.isStartingOperation || model.isPlanningExport)
         .onChange(of: model.isShowingExportReview, initial: true) { _, visible in
-            if visible { showingReview = true }
+            if visible, let plan = model.restorePlan {
+                policy = plan.request.phoneConflictPolicy
+                if case .phoneFolder(let folder, _) = plan.request.target {
+                    useOriginalPaths = false
+                    selectedFolder = folder
+                }
+                showingReview = true
+            }
             else if showingReview { dismiss() }
         }
         .onDisappear {
-            model.cancelRestorePlanning()
-            if model.restoreTargetIsPhone { model.cancelExportReview() }
+            if let reviewedPlanID, model.restorePlan?.id == reviewedPlanID { model.cancelExportReview() }
         }
     }
 
@@ -75,22 +86,17 @@ public struct PhoneRestoreDestinationSheet: View {
                     Text(policyExplanation).font(.callout).foregroundStyle(.secondary)
                 }
                 .disabled(!hasRepositoryDevice || model.isPlanningExport)
-                if model.isPlanningExport {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text(planningLabel).font(.callout)
-                        Text("No files are being written. You can cancel this check.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    .accessibilityElement(children: .combine)
-                }
                 if let error = model.errorMessage {
                     MessageBanner(text: error, symbol: "exclamationmark.triangle", isWarning: true)
                 }
             }
             .disabled(model.isPlanningExport)
         } footer: {
-            Button("Cancel") { model.cancelRestorePlanning(); dismiss() }.keyboardShortcut(.cancelAction)
+            Button("Cancel") {
+                model.isShowingPhoneRestoreSetup = false
+                model.cancelRestorePlanning()
+                dismiss()
+            }.keyboardShortcut(.cancelAction)
             Button("Review Restore") {
                 guard let policy else { return }
                 Task { await model.planPhoneRestore(to: useOriginalPaths ? nil : selectedFolder, policy: policy) }
@@ -115,12 +121,6 @@ public struct PhoneRestoreDestinationSheet: View {
         case .stopIfFileExists: "Existing files block the restore. Some Android storage requires replacement permission even for new files."
         case .replaceFiles: "Replace matching files with the saved versions. Also allows creating files on Android storage that requires replacement permission. Folders and unsafe paths are never replaced."
         }
-    }
-
-    private var planningLabel: String {
-        guard let progress = model.restorePlanningProgress else { return "Preparing restore…" }
-        let phase = progress.stage == .verifyingBackup ? "Verifying backup" : "Checking destination paths"
-        return progress.totalItems > 0 ? "\(phase) · \(progress.completedItems) of \(progress.totalItems)" : "\(phase)…"
     }
 
     private var hasRepositoryDevice: Bool {

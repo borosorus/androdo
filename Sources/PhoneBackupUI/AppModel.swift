@@ -51,6 +51,8 @@ public final class AppModel {
     public private(set) var isPlanningBackup = false
     public private(set) var isPlanningExport = false
     public private(set) var restorePlanningProgress: RestorePlanningProgress?
+    public private(set) var progressSession: OperationProgressSession?
+    public var isShowingPhoneRestoreSetup = false
     public private(set) var isPlanningCopy = false
     public private(set) var isStartingOperation = false
     public private(set) var isLoadingFolder = false
@@ -67,6 +69,7 @@ public final class AppModel {
     @ObservationIgnored private let preferences: AppPreferences
     @ObservationIgnored private let locationAccess: BackupLocationAccess
     @ObservationIgnored private var planningTask: Task<BackupPlan, Error>?
+    @ObservationIgnored private var copyPlanningTask: Task<CopyPlan, Error>?
     @ObservationIgnored private var restorePlanningTask: Task<RestorePlan, Error>?
     @ObservationIgnored private var restorePlanningRequest: UUID?
     @ObservationIgnored private var operationTask: Task<Void, Never>?
@@ -331,35 +334,42 @@ public final class AppModel {
             errorMessage = "Choose at least one folder or select All shared files."
             return
         }
+        let progressID = beginProgress(.backup, stage: .planning)
         isPlanningBackup = true
         errorMessage = nil
         backupPlan = nil
         let generation = contextGeneration
+        let selection = backupSelection
+        let task = Task {
+            let repository = try await self.repository(for: device, createIfMissing: true, at: backupLocation)
+            try Task.checkCancellation()
+            return try await engine.plan(repository: repository.id, device: device.id, selection: selection)
+        }
+        planningTask = task
+        defer { planningTask = nil; isPlanningBackup = false }
         do {
-            let repository = try await repository(for: device, createIfMissing: true, at: backupLocation)
-            let selection = backupSelection
-            let task = Task { try await engine.plan(repository: repository.id, device: device.id, selection: selection) }
-            planningTask = task
-            let plan = try await task.value
-            guard generation == contextGeneration, selectedDevice?.id == device.id,
+            let plan = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            try Task.checkCancellation()
+            guard progressSession?.id == progressID, progressSession?.cancellationRequested != true,
+                  generation == contextGeneration, selectedDevice?.id == device.id,
                   self.backupLocation == backupLocation else {
-                planningTask = nil
-                isPlanningBackup = false
+                finishPreparationProgress(progressID, cancelled: true)
                 return
             }
             backupPlan = plan
+            finishPreparationProgress(progressID)
             isShowingBackupReview = true
             if plan.omissions.isEmpty { statusMessage = nil }
         } catch is CancellationError {
-            statusMessage = "Backup planning cancelled."
+            finishPreparationProgress(progressID, cancelled: true)
         } catch {
-            errorMessage = UserFacingError.message(for: error)
+            finishPreparationProgress(progressID, error: error)
         }
-        planningTask = nil
-        isPlanningBackup = false
     }
 
     public func cancelPlanning() {
+        guard isPlanningBackup else { return }
+        progressSession?.cancellationRequested = true
         planningTask?.cancel()
     }
 
@@ -371,6 +381,9 @@ public final class AppModel {
 
     public func startBackup() async {
         guard !isBusy, let plan = backupPlan, let engine = services.backupEngine else { return }
+        let progressID = beginProgress(.backup, stage: .starting)
+        isShowingBackupReview = false
+        backupPlan = nil
         isStartingOperation = true
         defer { isStartingOperation = false }
         do {
@@ -382,7 +395,7 @@ public final class AppModel {
             statusMessage = nil
             monitorBackup(operation, engine: engine, repository: plan.repository)
         } catch {
-            errorMessage = UserFacingError.message(for: error)
+            finishPreparationProgress(progressID, error: error)
         }
     }
 
@@ -392,6 +405,7 @@ public final class AppModel {
 
     public func retryBackup(_ attempt: BackupAttempt?) async {
         guard !isBusy, let attempt, let engine = services.backupEngine else { return }
+        let progressID = beginProgress(.backup, stage: .starting)
         isStartingOperation = true
         defer { isStartingOperation = false }
         do {
@@ -401,7 +415,7 @@ public final class AppModel {
             pendingAttempts.removeAll { $0.id == attempt.id }
             monitorBackup(operation, engine: engine, repository: attempt.repository)
         } catch {
-            errorMessage = UserFacingError.message(for: error)
+            finishPreparationProgress(progressID, error: error)
         }
     }
 
@@ -411,6 +425,7 @@ public final class AppModel {
 
     public func finishBackupWithOmissions(_ attempt: BackupAttempt?) async {
         guard !isBusy, let attempt, let engine = services.backupEngine else { return }
+        let progressID = beginProgress(.backup, stage: .starting)
         isStartingOperation = true
         defer { isStartingOperation = false }
         do {
@@ -419,7 +434,7 @@ public final class AppModel {
             pendingAttempts.removeAll { $0.id == attempt.id }
             monitorBackup(operation, engine: engine, repository: attempt.repository)
         } catch {
-            errorMessage = UserFacingError.message(for: error)
+            finishPreparationProgress(progressID, error: error)
         }
     }
 
@@ -461,25 +476,47 @@ public final class AppModel {
                                    replaceMissingTargets: replacingMissingTargets), using: engine)
     }
 
-    private func planCopy(_ request: CopyRequest, using engine: any CopyEngine) async {
+    private func prepareCopy(_ request: CopyRequest, using engine: any CopyEngine,
+                             requiresReview: Bool = true) async throws -> CopyPlan {
+        let progressID = beginProgress(.copy, stage: .planning)
         isPlanningCopy = true
         errorMessage = nil
         statusMessage = nil
         let generation = contextGeneration
-        defer { isPlanningCopy = false }
+        let task = Task { try await engine.planCopy(request) }
+        copyPlanningTask = task
+        defer { isPlanningCopy = false; copyPlanningTask = nil }
         do {
-            let plan = try await engine.planCopy(request)
-            guard generation == contextGeneration else { endCopyAccess(); return }
-            copyPlan = plan
+            let plan = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            try Task.checkCancellation()
+            guard progressSession?.id == progressID, progressSession?.cancellationRequested != true,
+                  generation == contextGeneration else { throw CancellationError() }
+            if requiresReview { finishPreparationProgress(progressID) }
+            else { progressSession?.stage = .starting }
+            return plan
+        } catch is CancellationError {
+            finishPreparationProgress(progressID, cancelled: true)
+            throw CancellationError()
+        } catch {
+            finishPreparationProgress(progressID, error: error)
+            throw error
+        }
+    }
+
+    private func planCopy(_ request: CopyRequest, using engine: any CopyEngine) async {
+        do {
+            copyPlan = try await prepareCopy(request, using: engine)
             isShowingCopyReview = true
         } catch {
             endCopyAccess()
-            errorMessage = UserFacingError.message(for: error)
         }
     }
 
     public func startCopy(replacing conflicts: Set<UUID>) async {
         guard !isBusy, let plan = copyPlan, let engine = services.copyEngine else { return }
+        let progressID = beginProgress(.copy, stage: .starting)
+        isShowingCopyReview = false
+        copyPlan = nil
         isStartingOperation = true
         defer { isStartingOperation = false }
         do {
@@ -505,7 +542,7 @@ public final class AppModel {
                 endCopyAccess()
                 copyPlan = nil
                 isShowingCopyReview = false
-                errorMessage = UserFacingError.message(for: error)
+                finishPreparationProgress(progressID, error: error)
             }
             activeCopyRequest = nil
         }
@@ -514,22 +551,12 @@ public final class AppModel {
     private func replanCopyWithExplicitMissingTarget(_ request: CopyRequest, path: RemotePath,
                                                        engine: any CopyEngine) async -> Bool {
         guard case .macToPhone(let device, let sources, let destination, _) = request else { return false }
-        isPlanningCopy = true
-        defer { isPlanningCopy = false }
-        do {
-            let explicitPlan = try await engine.planCopy(.macToPhone(device: device, sources: sources,
-                                                                     destination: destination,
-                                                                     replaceMissingTargets: [path]))
-            copyPlan = explicitPlan
-            copyResult = nil
-            isShowingCopyReview = true
-            errorMessage = nil
-            statusMessage = "Android cannot safely create this file without replacement. Review the exact missing path and explicitly approve the replacement before continuing."
-            return true
-        } catch {
-            errorMessage = UserFacingError.message(for: error)
-            return false
-        }
+        await planCopy(.macToPhone(device: device, sources: sources, destination: destination,
+                                   replaceMissingTargets: [path]), using: engine)
+        guard isShowingCopyReview else { return false }
+        copyResult = nil
+        statusMessage = "Android cannot safely create this file without replacement. Review the exact missing path and explicitly approve the replacement before continuing."
+        return true
     }
 
     public func cancelCopyReview() {
@@ -545,19 +572,14 @@ public final class AppModel {
         }
         guard device.state == .device else { throw EngineError.deviceUnavailable(device.id) }
         guard let engine = services.copyEngine else { throw EngineError.adbUnavailable("Copy engine unavailable") }
-        isPlanningCopy = true
-        let plan: CopyPlan
-        do {
-            plan = try await engine.planCopy(.phoneToMac(device: device.id, roots: [entry.path],
-                                                        destination: destination.deletingLastPathComponent()))
-            isPlanningCopy = false
-        } catch {
-            isPlanningCopy = false
-            throw error
-        }
+        let plan = try await prepareCopy(.phoneToMac(device: device.id, roots: [entry.path],
+                                                     destination: destination.deletingLastPathComponent()),
+                                         using: engine, requiresReview: false)
         guard plan.conflicts.isEmpty,
               plan.mappings.contains(where: { $0.destination == .local(destination) }) else {
-            throw EngineError.destinationConflict(TransferConflict(destination: destination.path, kind: .fileExists))
+            let error = EngineError.destinationConflict(TransferConflict(destination: destination.path, kind: .fileExists))
+            if let id = progressSession?.id { finishPreparationProgress(id, error: error) }
+            throw error
         }
         isStartingOperation = true
         let operation: OperationID
@@ -566,6 +588,7 @@ public final class AppModel {
             isStartingOperation = false
         } catch {
             isStartingOperation = false
+            if let id = progressSession?.id { finishPreparationProgress(id, error: error) }
             throw error
         }
         monitorCopy(operation, engine: engine)
@@ -673,6 +696,8 @@ public final class AppModel {
     }
 
     private func planRestore(_ request: RestoreRequest, title: String) async {
+        let progressID = beginProgress(isPhoneRestoreTarget(request.target) ? .restore : .export, stage: .planning)
+        isShowingPhoneRestoreSetup = false
         let generation = contextGeneration
         let token = UUID()
         restorePlanningRequest = token
@@ -698,19 +723,21 @@ public final class AppModel {
         do {
             let plan = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
             try Task.checkCancellation()
-            guard restorePlanningRequest == token, generation == contextGeneration,
+            guard restorePlanningRequest == token, progressSession?.id == progressID,
+                  progressSession?.cancellationRequested != true, generation == contextGeneration,
                   selectedRepositoryID == request.repository,
                   selectedRestorePoint?.id == request.point,
-                  selectedRestoreRoots == Set(request.selectedRoots) else { return }
+                  selectedRestoreRoots == Set(request.selectedRoots) else { throw CancellationError() }
             restorePlan = plan
             restorePlanTitle = title
+            finishPreparationProgress(progressID)
             isShowingExportReview = true
             errorMessage = nil
         } catch is CancellationError {
-            // Cancellation does not publish a review or an alert.
+            finishPreparationProgress(progressID, cancelled: true)
         } catch {
             guard restorePlanningRequest == token, generation == contextGeneration else { return }
-            errorMessage = UserFacingError.message(for: error)
+            finishPreparationProgress(progressID, error: error)
         }
     }
 
@@ -720,11 +747,9 @@ public final class AppModel {
     }
 
     public func cancelRestorePlanning() {
+        guard isPlanningExport else { return }
+        progressSession?.cancellationRequested = true
         restorePlanningTask?.cancel()
-        restorePlanningTask = nil
-        restorePlanningRequest = nil
-        restorePlanningProgress = nil
-        isPlanningExport = false
     }
 
     public func startLocalExport(replacing conflicts: Set<UUID>) async {
@@ -733,6 +758,9 @@ public final class AppModel {
 
     public func startRestore(replacing conflicts: Set<UUID>) async {
         guard !isBusy, let plan = restorePlan else { return }
+        let progressID = beginProgress(isPhoneRestoreTarget(plan.request.target) ? .restore : .export, stage: .starting)
+        isShowingExportReview = false
+        restorePlan = nil
         isStartingOperation = true
         defer { isStartingOperation = false }
         do {
@@ -748,7 +776,7 @@ public final class AppModel {
             activeRestoreRequest = nil
             restorePlan = nil
             isShowingExportReview = false
-            errorMessage = UserFacingError.message(for: error)
+            finishPreparationProgress(progressID, error: error)
         }
     }
 
@@ -767,13 +795,74 @@ public final class AppModel {
     public func clearStatus() {
         statusMessage = nil
         errorMessage = nil
-        if !isOperationRunning {
+        if !isBusy {
+            progressSession = nil
             operationEvent = nil
             operationTitle = nil
             operationKind = nil
             restoreResult = nil
             copyResult = nil
         }
+    }
+
+    @discardableResult
+    private func beginProgress(_ kind: OperationKind, stage: OperationProgressSession.Stage) -> UUID {
+        let session = OperationProgressSession(kind: kind, stage: stage)
+        progressSession = session
+        return session.id
+    }
+
+    private func finishPreparationProgress(_ id: UUID, error: Error? = nil, cancelled: Bool = false) {
+        guard progressSession?.id == id else { return }
+        if let error {
+            progressSession?.stage = .finished
+            progressSession?.failure = UserFacingError.message(for: error)
+        } else if cancelled || progressSession?.cancellationRequested == true {
+            progressSession?.stage = .finished
+            progressSession?.wasCancelled = true
+        } else {
+            // Review remains the only route from preparation to a transfer.
+            progressSession = nil
+        }
+    }
+
+    private func finishOperationProgress(_ id: UUID?) {
+        guard let id, progressSession?.id == id else { return }
+        progressSession?.stage = .finished
+    }
+
+    public func showProgress() {
+        if progressSession == nil {
+            beginProgress(operationKind ?? .backup, stage: isOperationRunning ? .running : .finished)
+        } else { progressSession?.isPresented = true }
+    }
+    public func backgroundProgress() { progressSession?.isPresented = false }
+
+    public func dismissProgress() {
+        guard !isBusy else { backgroundProgress(); return }
+        clearStatus()
+    }
+
+    public var canCancelProgress: Bool {
+        guard let session = progressSession, !session.cancellationRequested else { return false }
+        switch session.stage {
+        case .planning: return true
+        case .running: return isOperationRunning && operationEvent?.phase.isTerminal != true
+        case .starting, .finished: return false
+        }
+    }
+
+    public func cancelProgress() async {
+        guard canCancelProgress else { return }
+        progressSession?.cancellationRequested = true
+        if progressSession?.stage == .planning {
+            switch progressSession?.kind {
+            case .backup: cancelPlanning()
+            case .copy: copyPlanningTask?.cancel()
+            case .restore, .export: cancelRestorePlanning()
+            case nil: break
+            }
+        } else { await cancelOperation() }
     }
 
     public func reportError(_ message: String) {
@@ -973,6 +1062,10 @@ public final class AppModel {
         activeActivityID = activityStore.begin(.backup)
         operationTitle = "Backing up"
         operationEvent = nil
+        if progressSession?.stage != .starting {
+            beginProgress(operationKind ?? .copy, stage: .running)
+        } else { progressSession?.stage = .running }
+        let progressID = progressSession?.id
         operationTask = Task { [weak self] in
             guard let self else { return }
             let stream = await engine.events(for: operation)
@@ -982,12 +1075,12 @@ public final class AppModel {
                 if let id = self.activeActivityID { self.activityStore.update(id, event: event) }
                 if event.phase.isTerminal { terminal = event; break }
             }
-            await self.finishBackupOperation(operation, engine: engine, repository: repository, terminal: terminal)
+            await self.finishBackupOperation(operation, engine: engine, repository: repository, terminal: terminal, progressID: progressID)
         }
     }
 
     private func finishBackupOperation(_ operation: OperationID, engine: any BackupEngine,
-                                       repository: RepositoryID, terminal: OperationEvent?) async {
+                                       repository: RepositoryID, terminal: OperationEvent?, progressID: UUID?) async {
         let attemptID = await engine.attemptID(for: operation)
         if let attemptID, let attempt = try? await services.repositoryStore.backupAttempt(attemptID, in: repository),
            attempt.state != .running {
@@ -1013,6 +1106,7 @@ public final class AppModel {
         }
         activeActivityID = nil
         if operationID == operation { operationID = nil; operationTitle = nil; activeOperationKind = nil }
+        finishOperationProgress(progressID)
         operationTask = nil
     }
 
@@ -1023,6 +1117,10 @@ public final class AppModel {
         activeActivityID = activityStore.begin(.restore)
         operationTitle = title
         operationEvent = nil
+        if progressSession?.stage != .starting {
+            beginProgress(operationKind ?? .copy, stage: .running)
+        } else { progressSession?.stage = .running }
+        let progressID = progressSession?.id
         operationTask = Task { [weak self] in
             guard let self else { return }
             let stream = await self.services.restoreEngine.events(for: operation)
@@ -1044,6 +1142,7 @@ public final class AppModel {
             self.activeRestoreRequest = nil
             if self.operationID == operation { self.operationID = nil; self.operationTitle = nil; self.activeOperationKind = nil }
             self.activeActivityID = nil
+            self.finishOperationProgress(progressID)
             self.operationTask = nil
         }
     }
@@ -1055,6 +1154,10 @@ public final class AppModel {
         activeActivityID = activityStore.begin(.copy)
         operationTitle = "Copying files"
         operationEvent = nil
+        if progressSession?.stage != .starting {
+            beginProgress(operationKind ?? .copy, stage: .running)
+        } else { progressSession?.stage = .running }
+        let progressID = progressSession?.id
         operationTask = Task { [weak self] in
             guard let self else { return }
             let stream = await engine.events(for: operation)
@@ -1083,6 +1186,7 @@ public final class AppModel {
             if self.operationID == operation { self.operationID = nil; self.operationTitle = nil; self.activeOperationKind = nil }
             if !presentedReplacementReview { self.endCopyAccess() }
             self.activeActivityID = nil
+            self.finishOperationProgress(progressID)
             self.operationTask = nil
         }
     }

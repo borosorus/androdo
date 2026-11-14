@@ -3,7 +3,6 @@ import SwiftUI
 
 struct RestorePointBrowser: View {
     @Environment(AppModel.self) private var model
-    @State private var showingPhoneRestore = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,7 +20,7 @@ struct RestorePointBrowser: View {
                         Spacer(minLength: 0)
                     }
                     HStack {
-                        Button("Restore Selected…") { showingPhoneRestore = true }
+                        Button("Restore Selected…") { model.isShowingPhoneRestoreSetup = true }
                             .disabled(model.selectedRestoreRoots.isEmpty || model.isBusy)
                         Button("Export Selected…") { chooseExportFolder() }
                             .disabled(model.selectedRestoreRoots.isEmpty || model.isBusy)
@@ -51,7 +50,6 @@ struct RestorePointBrowser: View {
                 ContentUnavailableView("Select a restore point", systemImage: "clock.arrow.circlepath", description: Text("Choose a dated backup to browse or restore its files."))
             }
         }
-        .sheet(isPresented: $showingPhoneRestore) { PhoneRestoreDestinationSheet() }
     }
 
     private var rootEntries: [BackupEntry] {

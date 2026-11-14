@@ -93,10 +93,7 @@ struct DeviceOverview: View {
     @ViewBuilder
     private var primaryAction: some View {
         if model.isPlanningBackup {
-            HStack {
-                ProgressView().controlSize(.small)
-                Button("Cancel") { model.cancelPlanning() }.keyboardShortcut(.cancelAction)
-            }
+            Button("Show Progress") { model.showProgress() }
         } else if model.isBusy {
             Text(model.isOperationRunning ? "Operation in progress…" : "Preparing…")
                 .font(.callout).foregroundStyle(.secondary)

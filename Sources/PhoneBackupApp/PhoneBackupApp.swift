@@ -22,6 +22,8 @@ struct AndrodoApp: App {
         }
         .defaultSize(width: 1120, height: 760)
 
+        OperationProgressScene(model: model)
+
         Settings {
             PhoneBackupSettings().environment(model).controlSize(.large)
         }

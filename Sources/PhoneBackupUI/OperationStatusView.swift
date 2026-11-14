@@ -1,47 +1,21 @@
 import PhoneBackupCore
 import SwiftUI
 
-struct OperationStatusView: View {
+struct OperationProgressDetails: View {
     @Environment(AppModel.self) private var model
     @Binding var showingOmissionConfirmation: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label(presentation.title, systemImage: presentation.symbol)
-                    .font(.callout.weight(.semibold))
-                Spacer()
-                if model.isOperationRunning {
-                    Button("Cancel", role: .cancel) { Task { await model.cancelOperation() } }
-                        .disabled(model.operationEvent?.phase.isTerminal == true)
-                } else if model.recoveryAttempt == nil && model.operationEvent?.phase.isTerminal == true {
-                    Button("Dismiss") { model.clearStatus() }.keyboardShortcut(.cancelAction)
-                }
+            if let failure = model.progressSession?.failure {
+                MessageBanner(text: failure, symbol: "exclamationmark.triangle", isWarning: true)
             }
-            if let event = model.operationEvent {
-                HStack(spacing: 12) {
-                    if event.phase.isTerminal {
-                        Image(systemName: event.phase == .completed && event.warnings.isEmpty ? "checkmark.circle.fill" : "exclamationmark.circle")
-                            .foregroundStyle(event.phase == .completed && event.warnings.isEmpty ? AppIdentity.teal : Color.secondary)
-                    } else if event.phase == .scanning || event.phase == .planning {
-                        ProgressView().controlSize(.small)
-                    } else if let total = event.progress.totalBytes, total > 0 {
-                        ProgressView(value: Double(event.progress.completedBytes), total: Double(total)).frame(maxWidth: 220)
-                    } else if let total = event.progress.totalItems, total > 0 {
-                        ProgressView(value: Double(event.progress.completedItems), total: Double(total)).frame(maxWidth: 220)
-                    } else { ProgressView().controlSize(.small) }
-                    Text(presentation.phase).font(.callout).foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                    if event.progress.totalItems != nil || event.progress.completedItems > 0 {
-                        Text("\(event.progress.completedItems) / \(event.progress.totalItems.map(String.init) ?? "…") items · \(UIFormatting.bytes(event.progress.completedBytes))")
-                            .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                    }
-                }
+            if showsOperationDetails, let event = model.operationEvent {
                 if let failure = event.failure {
                     MessageBanner(text: failureMessage(failure), symbol: "exclamationmark.triangle", isWarning: true)
                 }
             }
-            if let event = model.operationEvent, !event.warnings.isEmpty {
+            if showsOperationDetails, let event = model.operationEvent, !event.warnings.isEmpty {
                 DisclosureGroup("Warning details (\(event.warnings.count))") {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 8) {
@@ -55,17 +29,15 @@ struct OperationStatusView: View {
                     }.frame(maxHeight: 110)
                 }
             }
-            if model.operationEvent == nil && !presentation.phase.isEmpty {
-                Text(presentation.phase).font(.callout).foregroundStyle(.secondary)
-            }
-            if model.recoveryAttempt != nil || !model.pendingAttempts.isEmpty {
+            if (model.progressSession == nil || model.progressSession?.isFinished == true),
+               model.recoveryAttempt != nil || !model.pendingAttempts.isEmpty {
                 ScrollView { recoveryContent }.frame(maxHeight: 170)
             }
-            if let result = model.restoreResult {
+            if showsOperationDetails, let result = model.restoreResult {
                 Text("Restore result: \(result.items.filter { $0.state == .publishedAndVerified }.count) verified, \(result.items.filter { $0.state != .publishedAndVerified }.count) need attention.")
                     .font(.callout).foregroundStyle(.secondary)
             }
-            if let result = model.copyResult {
+            if showsOperationDetails, let result = model.copyResult {
                 Text("Copy result: \(result.items.filter { $0.state == .publishedAndVerified }.count) verified, \(result.items.filter { $0.state != .publishedAndVerified }.count) need attention.")
                     .font(.callout).foregroundStyle(.secondary)
             }
@@ -131,9 +103,30 @@ struct OperationStatusView: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var presentation: OperationPresentation {
-        OperationPresentation(kind: model.operationKind, event: model.operationEvent,
-                              isRunning: model.isOperationRunning, recovery: model.recoveryAttempt,
-                              pendingCount: model.pendingAttempts.count)
+    private var showsOperationDetails: Bool {
+        guard let session = model.progressSession else { return true }
+        return (session.stage == .running || session.stage == .finished) && session.failure == nil && !session.wasCancelled
+    }
+}
+
+/// Compact background presentation. Detailed results and recovery remain in the progress window.
+struct OperationStatusView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: model.progressPresentation.symbol)
+                .font(.title3).foregroundStyle(AppIdentity.blue)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model.progressPresentation.title).font(.callout.weight(.semibold))
+                Text(model.progressPresentation.phase).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Spacer(minLength: 8)
+            if model.canCancelProgress {
+                Button("Cancel") { Task { await model.cancelProgress() } }
+            }
+            Button(model.progressSession?.isFinished == true ? "Show Details" : "Show Progress") { model.showProgress() }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

@@ -15,12 +15,16 @@ final class RestorePlanningTests: XCTestCase {
         XCTAssertTrue(fixture.model.isPlanningExport)
         XCTAssertNotNil(fixture.model.restorePlanningProgress)
         fixture.model.cancelRestorePlanning()
+        XCTAssertTrue(fixture.model.isBusy, "Cancellation retains ownership until the worker unwinds")
+        XCTAssertTrue(fixture.model.progressSession?.cancellationRequested == true)
+        XCTAssertFalse(fixture.model.canCancelProgress)
+        await engine.finish(0)
+        await old.value
         XCTAssertFalse(fixture.model.isBusy)
+        XCTAssertFalse(fixture.model.isShowingExportReview)
         let current = Task { await fixture.model.planPhoneRestore(to: nil, policy: .replaceFiles) }
         await engine.waitForPlan(1)
         await engine.sendProgress(1, completed: 2)
-        await engine.finish(0)
-        await old.value
         XCTAssertTrue(fixture.model.isPlanningExport)
         XCTAssertEqual(fixture.model.restorePlanningProgress?.completedItems, 2)
         XCTAssertFalse(fixture.model.isShowingExportReview)
@@ -32,6 +36,45 @@ final class RestorePlanningTests: XCTestCase {
         XCTAssertTrue(fixture.model.isShowingExportReview)
         XCTAssertEqual(fixture.model.restorePlan?.request.phoneConflictPolicy, .replaceFiles)
         XCTAssertNil(fixture.model.restorePlanningProgress)
+    }
+
+    func testBackgroundPlanningDetachesPhoneSetupThenHandsOffToReviewWithoutStarting() async throws {
+        let engine = GatedRestoreEngine()
+        let fixture = try RestoreFixture(engine: engine)
+        defer { fixture.cleanup() }
+        try await fixture.prepare()
+        fixture.model.isShowingPhoneRestoreSetup = true
+        let planning = Task { await fixture.model.planPhoneRestore(to: nil, policy: .replaceFiles) }
+        await engine.waitForPlan(0)
+        XCTAssertFalse(fixture.model.isShowingPhoneRestoreSetup)
+        XCTAssertTrue(fixture.model.progressSession?.isPresented == true)
+        fixture.model.backgroundProgress()
+        await engine.sendProgress(0, completed: 4)
+        XCTAssertFalse(fixture.model.progressSession?.isPresented == true)
+        XCTAssertEqual(fixture.model.progressFraction, 0.4)
+        await engine.finish(0)
+        await planning.value
+        XCTAssertTrue(fixture.model.isShowingExportReview)
+        XCTAssertNil(fixture.model.progressSession, "Progress closes for explicit review")
+        XCTAssertNil(fixture.model.operationID, "Review never starts a transfer")
+    }
+
+    func testLocalExportSharesPreparationAndExplicitReview() async throws {
+        let engine = GatedRestoreEngine()
+        let fixture = try RestoreFixture(engine: engine)
+        defer { fixture.cleanup() }
+        try await fixture.prepare()
+        let planning = Task { await fixture.model.planLocalExport(to: fixture.root) }
+        await engine.waitForPlan(0)
+        XCTAssertEqual(fixture.model.progressSession?.kind, .export)
+        XCTAssertEqual(fixture.model.progressSession?.stage, .planning)
+        fixture.model.backgroundProgress()
+        await engine.finish(0)
+        await planning.value
+        XCTAssertTrue(fixture.model.isShowingExportReview)
+        XCTAssertFalse(fixture.model.restoreTargetIsPhone)
+        XCTAssertNil(fixture.model.progressSession)
+        XCTAssertNil(fixture.model.operationID)
     }
 
     func testUnsupportedStrictPublicationKeepsBatchResultAndNeverAutomaticallyReplans() async throws {

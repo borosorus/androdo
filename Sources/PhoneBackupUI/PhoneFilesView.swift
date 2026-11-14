@@ -104,7 +104,6 @@ struct PhoneFilesView: View {
                 Button("Copy from Mac…") { chooseMacSources() }
                     .disabled(browser.device?.state != .device || model.isBusy || browser.isLoading || browser.errorMessage != nil || !browser.hasOpenedRoot)
             }.padding(16)
-            if model.isPlanningCopy { ProgressView("Preparing file copy plan…").padding(.horizontal, 16).padding(.bottom, 10) }
         }
         .onDrop(of: [UTType.fileURL], isTargeted: $isDropTargeted) { providers in
             receiveFinderFiles(providers, destination: browser.currentDirectory,

@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PREVIEW_SCRATCH="${TMPDIR:-/tmp}/androdo-native-preview-build"
-OUTPUT="${1:?Usage: render-native-preview.sh OUTPUT.png [--dark] [--compact] [--collapsed] [--first-use] [--backups] [--long-name] [--scope] [--files] [--result] [--restore] [--restore-review]}"
+OUTPUT="${1:?Usage: render-native-preview.sh OUTPUT.png [--dark] [--compact] [--collapsed] [--first-use] [--backups] [--long-name] [--scope] [--files] [--result] [--restore] [--restore-review] [--progress] [--progress-planning] [--progress-failure] [--progress-window-check] [--progress-window-done] [--phone-handoff]}"
 shift
 swift build --package-path "$ROOT/macos/design/NativePreview" --scratch-path "$PREVIEW_SCRATCH" --product AndrodoNativePreview
 PREVIEW_BIN="$(swift build --package-path "$ROOT/macos/design/NativePreview" --scratch-path "$PREVIEW_SCRATCH" --show-bin-path)"
@@ -22,8 +22,14 @@ cat > "$BUNDLE/Contents/Info.plist" <<'PLIST'
 <key>LSUIElement</key><true/>
 </dict></plist>
 PLIST
+# Each fixture owns its AppKit restoration state as well as its isolated model preferences.
+PREVIEW_RUN_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier app.borosorus.Androdo.NativePreview.$PREVIEW_RUN_ID" "$BUNDLE/Contents/Info.plist"
 codesign --force --sign - "$BUNDLE"
 chmod 755 "$BUNDLE"
 open -W -n "$BUNDLE" --args --output "$WORK/capture.png" "$@"
-test -s "$WORK/capture.png"
+if [[ ! -s "$WORK/capture.png" ]]; then
+    if [[ -f "$WORK/failure.txt" ]]; then cat "$WORK/failure.txt" >&2; fi
+    exit 1
+fi
 cp "$WORK/capture.png" "$OUTPUT"
