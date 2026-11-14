@@ -3,7 +3,8 @@ import SwiftUI
 
 public struct PhoneBackupSettings: View {
     @Environment(AppModel.self) private var model
-    @State private var showingADBSetup = false
+    @State private var showingConnectionSetup = false
+    @State private var showingADBTools = false
 
     public init() {}
 
@@ -31,15 +32,20 @@ public struct PhoneBackupSettings: View {
                 if let url = model.adbExecutableURL {
                     Text(url.path).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
                 }
-                Button(model.hasADB ? "Connection Setup…" : "Set Up ADB…") { showingADBSetup = true }
-                    .disabled(model.isBusy)
+                HStack {
+                    Button("Connection Setup…") { showingConnectionSetup = true }
+                        .disabled(model.isBusy)
+                    Button("ADB Tools…") { showingADBTools = true }
+                        .disabled(model.isBusy)
+                }
                 Text("Android Platform Tools provides the connection to your phone.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 470, height: 410)
+        .frame(width: 470, height: 430)
         .tint(AppIdentity.blue)
-        .sheet(isPresented: $showingADBSetup) { ADBSetupView() }
+        .sheet(isPresented: $showingConnectionSetup) { ConnectionSetupView() }
+        .sheet(isPresented: $showingADBTools) { ADBToolsView() }
     }
 }

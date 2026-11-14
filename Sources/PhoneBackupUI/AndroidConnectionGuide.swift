@@ -1,7 +1,7 @@
 import PhoneBackupCore
 import SwiftUI
 
-/// Focused, reusable instructions for preparing and authorizing an Android phone over ADB.
+/// Compact USB instructions with optional manufacturer and trust details.
 struct AndroidConnectionGuide: View {
     let hasADB: Bool
     let deviceState: DeviceState?
@@ -12,77 +12,63 @@ struct AndroidConnectionGuide: View {
     private let adbAuthorizationURL = URL(string: "https://developer.android.com/tools/adb#Enabling")!
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "cable.connector")
-                    .font(.title2)
-                    .foregroundStyle(AppIdentity.teal)
-                    .frame(width: 42, height: 42)
-                    .background(AppIdentity.teal.opacity(0.10), in: RoundedRectangle(cornerRadius: 11))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Prepare your phone").font(.headline)
-                    Text("Android hides this connection behind Developer options and a trust prompt.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-            }
-
+        VStack(alignment: .leading, spacing: 12) {
             Label(connectionStatus, systemImage: statusSymbol)
                 .font(.callout.weight(.medium))
                 .foregroundStyle(statusColor)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(statusColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
 
-            VStack(alignment: .leading, spacing: 14) {
-                AndroidConnectionStep(number: 1, title: "Turn on Developer options",
-                                      detail: "On your phone, open Settings → About phone → Build number and tap Build number seven times. Enter your screen lock if asked. On Samsung phones, Build number is under Software information. Names and locations vary by manufacturer.")
-                AndroidConnectionStep(number: 2, title: "Enable USB debugging",
-                                      detail: "Return to Settings → System → Developer options and turn on USB debugging. Some phones place Developer options elsewhere or use a slightly different label.")
-                AndroidConnectionStep(number: 3, title: "Connect and unlock the phone",
-                                      detail: "Use a USB cable that supports data, then keep the phone unlocked while connecting it to this Mac.")
+            VStack(alignment: .leading, spacing: 9) {
+                AndroidConnectionStep(number: 1, title: "Enable Developer options",
+                                      detail: "On Android, open Settings → About phone and tap Build number seven times.")
+                Divider().padding(.leading, 35)
+                AndroidConnectionStep(number: 2, title: "Turn on USB debugging",
+                                      detail: "Find Developer options in Settings and enable USB debugging.")
+                Divider().padding(.leading, 35)
+                AndroidConnectionStep(number: 3, title: "Connect and unlock your phone",
+                                      detail: "Use a data-capable USB cable and keep Android unlocked.")
+                Divider().padding(.leading, 35)
                 AndroidConnectionStep(number: 4, title: "Authorize this Mac",
-                                      detail: "If Android shows “Allow USB debugging?”, approve it only if you trust this Mac. A Mac you authorized before may not prompt again. Then choose Check Again in Androdo.")
+                                      detail: "Approve “Allow USB debugging?” on Android, then choose Check Again.")
             }
+            .padding(.vertical, 3)
 
-            VStack(alignment: .leading, spacing: 7) {
-                Label("Why Androdo needs this", systemImage: "questionmark.circle")
-                    .font(.callout.weight(.semibold)).foregroundStyle(AppIdentity.blue)
-                Text("USB debugging gives an authorized computer an ADB command connection to Android. Androdo uses that connection for the file actions you start. Check Again checks connected devices. Connecting a phone never opens its folders; in File Explorer, choose Open Shared Storage when you’re ready to browse. Androdo lists only the current folder’s immediate entries and doesn’t scan deeper folders.")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Text("Authorize only a Mac you trust. You can turn USB debugging off in Android Settings when you’re done using Androdo.")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            DisclosureGroup("Connection help and privacy") {
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("Settings names vary by manufacturer. On Samsung, Build number is under Software information. Enter your screen lock if Android asks.")
+                    Text("USB debugging gives an authorized computer an ADB command connection. Authorize only a Mac you trust; you can turn debugging off in Android Settings when you’re done.")
+                    Text("Device checks verify connection and identity. They don’t list folders or read files. In File Explorer, choose Open Shared Storage to browse.")
+                    Link("Developer options guide…", destination: developerOptionsURL)
+                    Link("USB debugging settings…", destination: usbDebuggingURL)
+                    Link("ADB authorization and trust…", destination: adbAuthorizationURL)
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 9)
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AppIdentity.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
-
-            VStack(alignment: .leading, spacing: 7) {
-                Link("Developer options guide…", destination: developerOptionsURL)
-                Link("USB debugging settings…", destination: usbDebuggingURL)
-                Link("ADB authorization and trust…", destination: adbAuthorizationURL)
-            }
-            .font(.callout)
+            .font(.callout.weight(.medium))
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background, in: RoundedRectangle(cornerRadius: 16))
-        .overlay { RoundedRectangle(cornerRadius: 16).strokeBorder(.primary.opacity(0.07)) }
     }
 
     private var connectionStatus: String {
         guard hasADB else { return "Set up ADB on this Mac first; then Androdo can check for your phone." }
         if discoveryIssue == .identityUnavailable {
-            return "ADB sees a connected phone, but Androdo couldn’t verify its identity. Refresh the device list or check the phone’s ADB connection. File operations stay disabled until identity can be verified."
+            return "ADB sees a phone, but Androdo couldn’t verify its identity. Refresh the device list or check the phone’s connection. File actions stay disabled until identity is verified."
         }
         if discoveryIssue == .unsupportedConnection {
             return "ADB listed a phone without a usable connection ID. Update Android Platform Tools, then choose Check Again."
         }
         if discoveryIssue == .transferProtocolUnavailable {
-            return "This connection does not support Androdo’s guarded file-transfer protocol. Update Android Platform Tools, then choose Check Again."
+            return "This connection doesn’t support Androdo’s guarded file transfer. Update Android Platform Tools, then choose Check Again."
         }
         guard let deviceState else { return "No phone is listed yet. Connect it by USB, unlock it, then choose Check Again." }
         return switch deviceState {
         case .device: "This phone is connected and authorized."
-        case .unauthorized: "Android sees this phone, but it has not authorized this Mac yet. Unlock the phone and approve its prompt."
+        case .unauthorized: "Android sees this phone, but it hasn’t authorized this Mac. Unlock it and approve the prompt."
         case .offline: "Android lists this phone as offline. Reconnect the cable and unlock the phone."
         case .bootloader, .recovery, .sideload: "The phone is in a maintenance mode. Restart Android normally to browse shared files."
         case .unknown(let state): "Android reported an unrecognized connection state: \(state)."
@@ -104,7 +90,7 @@ struct AndroidConnectionGuide: View {
         if discoveryIssue != nil { return AppIdentity.copper }
         if deviceState == .device { return AppIdentity.teal }
         if deviceState == .unauthorized { return AppIdentity.copper }
-        return .secondary
+        return AppIdentity.blue
     }
 }
 
@@ -114,14 +100,14 @@ private struct AndroidConnectionStep: View {
     let detail: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 10) {
             Text(number.formatted())
                 .font(.caption.weight(.bold).monospacedDigit())
                 .foregroundStyle(AppIdentity.blue)
-                .frame(width: 25, height: 25)
+                .frame(width: 23, height: 23)
                 .background(AppIdentity.blue.opacity(0.10), in: Circle())
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.callout.weight(.semibold))
                 Text(detail).font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

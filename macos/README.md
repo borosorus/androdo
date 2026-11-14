@@ -43,9 +43,11 @@ outside v1.
 Androdo checks a saved executable path, its own managed Platform Tools folder,
 `ANDROID_HOME`/`ANDROID_SDK_ROOT`, the standard Android SDK folder, common
 Homebrew locations and absolute entries in the current `PATH`. It does not
-search the whole Mac. **Set Up Connection…** in Overview offers to install the
-current macOS Platform Tools directly from Google after you review and agree to
-Google’s Android SDK License Agreement. Android Studio is not required.
+search the whole Mac. **Set Up Connection…** in Overview opens the phone
+connection guide. **ADB Tools…** opens a separate screen where you can install
+the current macOS Platform Tools directly from Google after reviewing and
+agreeing to Google’s Android SDK License Agreement. Android Studio is not
+required.
 
 The app-owned copy is stored at `~/Library/Application Support/Androdo/Platform
 Tools`. Existing Android Studio, Homebrew and manually selected copies remain
@@ -66,16 +68,18 @@ brew install --cask android-platform-tools
 
 **Check Again** discovers an installation and enumerates connected devices
 without restarting the app. For a custom location, use **Locate ADB…**. The
-guide remains available under **Androdo → Settings… → Connection Setup…**. It
-does not run Homebrew. The app remembers a selected executable's path.
+connection guide and ADB Tools are separate actions under **Androdo →
+Settings…**. ADB Tools does not run Homebrew. The app remembers a selected
+executable's path.
 
-Connection Setup includes a numbered USB guide and, with ADB available, a
-separate Wi-Fi guide for Android 11 or later. For Wi-Fi, pair using the address,
-port, and temporary code from Android’s **Pair new device** screen. Then use the
-different address/port shown on the main **Wireless debugging** screen to
-connect. A phone already paired with this Mac can connect without entering a
-code again. Both devices must be on the same trusted network. Pairing remains
-trusted until you remove this Mac from Android’s **Paired devices** list.
+Connection Setup keeps USB and Wi-Fi choices separate from ADB installation.
+Its compact USB guide links to expanded connection help. With ADB available,
+Wi-Fi setup shows one focused action at a time: Pair this Mac, or Connect if it
+is already paired. Pairing uses the temporary address, port, and code from
+Android’s **Pair new device** screen. Connect uses the different address/port
+shown on the main **Wireless debugging** screen. Both devices must be on the
+same trusted network. Pairing remains trusted until you remove this Mac from
+Android’s **Paired devices** list.
 
 On macOS 15 or later, macOS may ask to allow local-network access. If you
 denied it, enable Androdo under **System Settings → Privacy & Security → Local

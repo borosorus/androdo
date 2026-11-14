@@ -17,21 +17,22 @@ checks, copied into the app, or committed.
 
 - [ ] Launch `dist/Androdo.app` without a connected phone; observe the main
       window and the ADB recovery control.
-- [ ] Open Connection Setup and verify the existing ADB path is shown when
-      found. Discovery checks only known SDK/Homebrew/managed paths and absolute
-      `PATH` entries; it does not recursively search the Mac.
-- [ ] In Connection Setup, review the numbered Developer options, USB debugging,
-      USB cable, and trust steps. Follow the Google help links and confirm that
-      device-specific settings paths are described as variable.
+- [ ] Open Connection Setup and verify it is focused on USB/Wi-Fi guidance.
+      ADB installation is a separate ADB Tools destination. Discovery checks
+      only known SDK/Homebrew/managed paths and absolute `PATH` entries; it does
+      not recursively search the Mac.
+- [ ] In Connection Setup, review the compact Developer options, USB debugging,
+      USB cable, and trust steps. Confirm manufacturer variations and Google
+      links are available under Connection help.
 - [ ] Verify the guide explains why ADB needs debugging and that the Mac should
       be trusted, without implying Android restricts ADB itself to selected files.
 - [ ] Check the guide’s status copy with no phone, an unauthorized phone, an
       offline phone, and an authorized phone. Opening the guide must not run
       device discovery or browse folders.
-- [ ] With ADB installed, verify Connection Setup has distinct USB and Wi-Fi
-      guides. Pairing uses the phone’s temporary pairing endpoint and code;
-      connecting uses the separate Wireless debugging endpoint and works for an
-      already-paired phone without a code.
+- [ ] With ADB installed, verify USB and Wi-Fi are separate choices and the
+      Wi-Fi form shows one task at a time. Pairing uses the phone’s temporary
+      endpoint and code; Connect uses the separate Wireless debugging endpoint
+      and works for an already-paired phone without a code.
 - [ ] Verify the Wi-Fi guide explains same-network setup, persistent pairing
       and revocation, and that Androdo does not run its own network scan. Confirm
       the bundle declares Local Network access and the ADB mDNS service types.
@@ -47,9 +48,10 @@ checks, copied into the app, or committed.
 - [ ] In File Explorer with no authorized phone, verify Connection Setup opens
       the same in-app guide and the direct Developer options link opens Google’s
       documentation.
-- [ ] Verify **Install Platform Tools** stays disabled until the unchecked
-      Google SDK terms agreement is selected, and that the managed destination
-      is visible before starting.
+- [ ] Open ADB Tools separately from Settings and Connection Setup. Verify
+      **Install Platform Tools** stays disabled until the unchecked Google SDK
+      terms agreement is selected, and that the managed destination is visible
+      before starting.
 - [ ] During a local install, observe download progress and confirm the progress
       window can be backgrounded and reopened. Cancel before publication and
       verify an existing configured ADB path remains selected.
@@ -97,8 +99,9 @@ and Mac dependent; do not claim them tested until observed.
 - [ ] App menu, About, Finder bundle, alerts, and Settings use Androdo.
 - [ ] App name/emblem appears in the native toolbar; no detached sidebar banner.
 - [ ] Main actions, review sheets, Settings, and file actions use consistent larger native controls.
-- [ ] With no ADB configured, Overview and the sidebar open the same guided setup.
-- [ ] Setup links to Google's Platform Tools/USB-debugging documentation and can copy the Homebrew command.
+- [ ] With no ADB configured, Overview and the sidebar open the same Connection
+      Setup guide; Set Up ADB opens the separate ADB Tools destination.
+- [ ] ADB Tools links to Google's Platform Tools documentation and can copy the Homebrew command; USB setup links to Google's debugging documentation.
 - [ ] Setup, Overview’s contextual connection action, and disconnected File Explorer state give a direct route to the phone guide.
 - [ ] Inspect the guide in light/dark appearance and compact sheet size; its numbered steps, external links, Escape dismissal, keyboard focus, and VoiceOver names remain clear.
 - [ ] The app-owned Platform Tools copy is stored under `~/Library/Application Support/Androdo/Platform Tools`; custom locations work through Locate ADB.

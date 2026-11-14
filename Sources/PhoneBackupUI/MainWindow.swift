@@ -7,7 +7,7 @@ public struct MainWindow: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    @State private var showingADBSetup = false
+    @State private var showingConnectionSetup = false
     @State private var showingRecentOperations = false
 
     public init(initialColumnVisibility: NavigationSplitViewVisibility = .all) {
@@ -59,7 +59,7 @@ public struct MainWindow: View {
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 10) {
                     if !model.hasADB {
-                        Button("Set Up Connection…") { showingADBSetup = true }.disabled(model.isBusy)
+                        Button("Set Up Connection…") { showingConnectionSetup = true }.disabled(model.isBusy)
                     }
                     SettingsLink {
                         Label("Settings…", systemImage: "gearshape")
@@ -125,7 +125,7 @@ public struct MainWindow: View {
         } message: {
             Text(model.errorMessage ?? "")
         }
-        .sheet(isPresented: $showingADBSetup) { ADBSetupView() }
+        .sheet(isPresented: $showingConnectionSetup) { ConnectionSetupView() }
         .sheet(isPresented: $showingRecentOperations) { RecentOperationsSheet() }
         .onChange(of: model.progressSession?.presentationID, initial: true) { _, id in
             if id != nil { openWindow(id: OperationProgressScene.windowID) }

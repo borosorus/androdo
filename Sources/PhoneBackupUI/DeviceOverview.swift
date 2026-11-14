@@ -4,7 +4,7 @@ import SwiftUI
 struct DeviceOverview: View {
     @Environment(AppModel.self) private var model
     @State private var selectionSession: BackupSelectionSession?
-    @State private var showingADBSetup = false
+    @State private var showingConnectionSetup = false
 
     var body: some View {
         ScrollView {
@@ -87,7 +87,7 @@ struct DeviceOverview: View {
         .sheet(item: $selectionSession) { session in
             BackupSelectionEditor(device: session.device, selection: session.selection)
         }
-        .sheet(isPresented: $showingADBSetup) { ADBSetupView() }
+        .sheet(isPresented: $showingConnectionSetup) { ConnectionSetupView() }
     }
 
     @ViewBuilder
@@ -100,7 +100,7 @@ struct DeviceOverview: View {
         } else {
             Button {
                 switch readiness {
-                case .connection: showingADBSetup = true
+                case .connection: showingConnectionSetup = true
                 case .location: chooseBackupFolder()
                 case .selection: beginSelection()
                 case .ready: Task { await model.reviewBackup() }

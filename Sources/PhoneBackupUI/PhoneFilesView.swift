@@ -6,7 +6,7 @@ struct PhoneFilesView: View {
     @Environment(AppModel.self) private var model
     @Environment(RemoteBrowserModel.self) private var browser
     @State private var isDropTargeted = false
-    @State private var showingADBSetup = false
+    @State private var showingConnectionSetup = false
 
     private let developerOptionsURL = URL(string: "https://developer.android.com/studio/debug/dev-options#enable")!
 
@@ -34,8 +34,8 @@ struct PhoneFilesView: View {
                 } description: {
                     Text(connectionUnavailableDescription)
                 } actions: {
-                    Button(model.hasADB ? "Connection Setup…" : "Set Up Connection…") {
-                        showingADBSetup = true
+                    Button("Connection Setup…") {
+                        showingConnectionSetup = true
                     }
                     Link("How to enable Developer options…", destination: developerOptionsURL)
                 }
@@ -128,7 +128,7 @@ struct PhoneFilesView: View {
         }
         .navigationTitle("File Explorer")
         .onDisappear { browser.cancelNavigation() }
-        .sheet(isPresented: $showingADBSetup) { ADBSetupView() }
+        .sheet(isPresented: $showingConnectionSetup) { ConnectionSetupView() }
     }
 
     private func selectedFolder(in paths: Set<RemotePath>) -> RemoteEntry? {
