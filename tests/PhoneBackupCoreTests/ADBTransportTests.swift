@@ -274,6 +274,26 @@ final class ADBTransportTests: XCTestCase {
         XCTAssertEqual(resolved, executable.standardizedFileURL)
     }
 
+    func testResolverRecoversManagedInstallUsingInjectedHomeDirectory() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let managed = home.appendingPathComponent("Library/Application Support/Androdo/Platform Tools/current/platform-tools/adb")
+        let sdk = home.appendingPathComponent("Library/Android/sdk/platform-tools/adb")
+        try FileManager.default.createDirectory(at: managed.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sdk.deletingLastPathComponent(), withIntermediateDirectories: true)
+        for executable in [managed, sdk] {
+            try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        }
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let resolved = ADBExecutableResolver.resolve(
+            environment: ["ANDROID_HOME": sdk.deletingLastPathComponent().deletingLastPathComponent().path, "PATH": "relative/bin"],
+            homeDirectory: home
+        )
+
+        XCTAssertEqual(resolved, managed.standardizedFileURL)
+    }
+
     func testResolverFallsBackWhenSavedADBNoLongerExists() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let executable = root.appendingPathComponent("platform-tools/adb")

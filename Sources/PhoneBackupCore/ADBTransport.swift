@@ -39,26 +39,41 @@ public enum ADBExecutableResolver {
 
     public static func resolve(preferredExecutable: URL?,
                                environment: [String: String] = ProcessInfo.processInfo.environment,
+                               homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
                                fileManager: FileManager = .default) -> URL? {
         if let preferredExecutable, isExecutableFile(at: preferredExecutable, fileManager: fileManager) {
             return preferredExecutable.standardizedFileURL
         }
-        return resolve(environment: environment, fileManager: fileManager)
+        return resolve(environment: environment, homeDirectory: homeDirectory, fileManager: fileManager)
     }
 
     public static func resolve(
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         fileManager: FileManager = .default
     ) -> URL? {
         let sdkRoots = [environment["ANDROID_HOME"], environment["ANDROID_SDK_ROOT"]]
-            .compactMap { $0 }
-            + [NSHomeDirectory() + "/Library/Android/sdk"]
-        let commonPaths = sdkRoots.map { URL(fileURLWithPath: $0).appendingPathComponent("platform-tools/adb").path }
-            + ["/opt/homebrew/bin/adb", "/usr/local/bin/adb", "/usr/bin/adb"]
-        let pathEntries = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
-        for path in commonPaths + pathEntries.map({ URL(fileURLWithPath: $0).appendingPathComponent("adb").path }) {
-            if isExecutableFile(at: URL(fileURLWithPath: path), fileManager: fileManager) {
-                return URL(fileURLWithPath: path).standardizedFileURL
+            .compactMap { value -> String? in
+                guard let value, value.hasPrefix("/"), !value.isEmpty else { return nil }
+                return value
+            }
+            + [homeDirectory.appendingPathComponent("Library/Android/sdk", isDirectory: true).path]
+        var candidates = [homeDirectory.appendingPathComponent(
+            "Library/Application Support/Androdo/Platform Tools/current/platform-tools/adb").path]
+        for root in sdkRoots {
+            candidates.append(URL(fileURLWithPath: root).appendingPathComponent("platform-tools/adb").path)
+        }
+        candidates.append(contentsOf: ["/opt/homebrew/bin/adb", "/usr/local/bin/adb", "/usr/bin/adb"])
+        for entry in (environment["PATH"] ?? "").split(separator: ":").map(String.init) where entry.hasPrefix("/") {
+            candidates.append(URL(fileURLWithPath: entry).appendingPathComponent("adb").path)
+        }
+
+        var checkedPaths = Set<String>()
+        for candidate in candidates {
+            let url = URL(fileURLWithPath: candidate).standardizedFileURL
+            guard checkedPaths.insert(url.path).inserted else { continue }
+            if isExecutableFile(at: url, fileManager: fileManager) {
+                return url
             }
         }
         return nil
