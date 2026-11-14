@@ -1,26 +1,73 @@
 import Foundation
 
-public struct DeviceID: Codable, Hashable, Sendable, CustomStringConvertible {
-    public let serial: String
+public struct DeviceID: Codable, Hashable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
+    /// Opaque, transport-independent identity. Never use this as an ADB selector.
+    public let value: String
 
-    public init(serial: String) throws {
-        guard !serial.isEmpty, !serial.contains("\0") else {
-            throw EngineError.invalidIdentifier
-        }
-        self.serial = serial
+    public init(value: String) throws {
+        guard !value.isEmpty, !value.contains("\0") else { throw EngineError.invalidIdentifier }
+        self.value = value
     }
 
-    public var description: String { serial }
+    /// Avoid exposing the durable fingerprint through incidental interpolation or diagnostics.
+    public var description: String { "Android device" }
+    public var debugDescription: String { description }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        try self.init(serial: container.decode(String.self))
+        try self.init(value: container.decode(String.self))
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
-        try container.encode(serial)
+        try container.encode(value)
     }
+}
+
+public enum ADBConnectionKind: String, Codable, Sendable {
+    case usb
+    case wireless
+    case other
+}
+
+/// A verified, process-local route to a device. Selectors and transport IDs are never persisted.
+public struct ADBConnectionSession: Hashable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
+    public let generation: UUID
+    public let kind: ADBConnectionKind
+    public let transportID: Int
+    let selector: String
+
+    init(generation: UUID = UUID(), kind: ADBConnectionKind, transportID: Int, selector: String) {
+        self.generation = generation
+        self.kind = kind
+        self.transportID = transportID
+        self.selector = selector
+    }
+
+    public var description: String { "ADB \(kind.rawValue) connection" }
+    public var debugDescription: String { description }
+}
+
+/// A device identity paired with one immutable ADB route for a planning/operation session.
+public struct DeviceSession: Hashable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
+    public let deviceID: DeviceID
+    public let connection: ADBConnectionSession
+    let identityEvidence: DeviceIdentityEvidence?
+
+    init(deviceID: DeviceID, connection: ADBConnectionSession, identityEvidence: DeviceIdentityEvidence?) {
+        self.deviceID = deviceID
+        self.connection = connection
+        self.identityEvidence = identityEvidence
+    }
+
+    static func fixture(deviceID: DeviceID, kind: ADBConnectionKind = .usb) -> DeviceSession {
+        DeviceSession(deviceID: deviceID,
+                      connection: ADBConnectionSession(kind: kind, transportID: 1, selector: "fixture"),
+                      identityEvidence: nil)
+    }
+
+    public var description: String { "Android device session" }
+    public var debugDescription: String { description }
 }
 
 public enum DeviceState: Codable, Equatable, Sendable {
@@ -38,12 +85,70 @@ public struct AndroidDevice: Codable, Equatable, Sendable, Identifiable {
     public let state: DeviceState
     public let model: String?
     public let product: String?
+    public let sessions: [DeviceSession]
 
-    public init(id: DeviceID, state: DeviceState, model: String? = nil, product: String? = nil) {
+    public init(id: DeviceID, state: DeviceState, model: String? = nil, product: String? = nil,
+                sessions: [DeviceSession] = []) {
         self.id = id
         self.state = state
         self.model = model
         self.product = product
+        self.sessions = sessions
+    }
+
+    public var preferredSession: DeviceSession? {
+        sessions.first(where: { $0.connection.kind == .usb }) ?? sessions.first
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, state, model, product }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(DeviceID.self, forKey: .id)
+        state = try container.decode(DeviceState.self, forKey: .state)
+        model = try container.decodeIfPresent(String.self, forKey: .model)
+        product = try container.decodeIfPresent(String.self, forKey: .product)
+        sessions = []
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(state, forKey: .state)
+        // Model and product are runtime display values and never belong in persisted device snapshots.
+    }
+}
+
+public enum DeviceDiscoveryIssueKind: Sendable, Equatable {
+    case unauthorized
+    case offline
+    case identityUnavailable
+    case unsupportedConnection
+    case transferProtocolUnavailable
+}
+
+/// Safe-to-display discovery result for a connection that could not be bound to a stable identity.
+public struct DeviceDiscoveryIssue: Sendable, Equatable, Identifiable {
+    public let id: UUID
+    public let kind: DeviceDiscoveryIssueKind
+    public let state: DeviceState
+    public let model: String?
+
+    public init(id: UUID = UUID(), kind: DeviceDiscoveryIssueKind, state: DeviceState, model: String? = nil) {
+        self.id = id
+        self.kind = kind
+        self.state = state
+        self.model = model
+    }
+}
+
+public struct DeviceDiscoveryResult: Sendable, Equatable {
+    public let devices: [AndroidDevice]
+    public let issues: [DeviceDiscoveryIssue]
+
+    public init(devices: [AndroidDevice], issues: [DeviceDiscoveryIssue] = []) {
+        self.devices = devices
+        self.issues = issues
     }
 }
 
@@ -449,13 +554,16 @@ public struct RestoreRequest: Sendable {
     public let selectedRoots: [RemotePath]
     public let target: RestoreTarget
     public let phoneConflictPolicy: PhoneRestoreConflictPolicy
+    public let session: DeviceSession?
     public init(repository: RepositoryID, point: RestorePointID, selectedRoots: [RemotePath], target: RestoreTarget,
-                phoneConflictPolicy: PhoneRestoreConflictPolicy = .stopIfFileExists) {
+                phoneConflictPolicy: PhoneRestoreConflictPolicy = .stopIfFileExists,
+                session: DeviceSession? = nil) {
         self.repository = repository
         self.point = point
         self.selectedRoots = Array(Set(selectedRoots)).sorted(by: RemotePath.bytewiseLess)
         self.target = target
         self.phoneConflictPolicy = phoneConflictPolicy
+        self.session = session
     }
 }
 

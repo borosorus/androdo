@@ -59,7 +59,7 @@ private struct SavedFixture {
     init() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        device = AndroidDevice(id: try DeviceID(serial: "saved-fixture"), state: .device)
+        device = fixtureDevice(id: try DeviceID(value: "saved-fixture"), state: .device)
         repository = BackupRepositoryInfo(location: root.appendingPathComponent("PhoneBackup/fixture"), deviceID: device.id, displayName: "Fixture")
         remote = FakeDeviceTransport(devices: [device])
         suite = "AndrodoSavedTests.\(UUID().uuidString)"

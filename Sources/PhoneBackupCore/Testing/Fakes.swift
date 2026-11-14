@@ -91,11 +91,12 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteDestinationAccess {
     public func recordedPublications() -> [Publication] { publications }
     public func setSupportsNoOverwritePublication(_ supported: Bool) { supportsNoOverwritePublication = supported }
 
-    public func connectedDevices() async throws -> [AndroidDevice] {
-        devices
+    public func connectedDevices() async throws -> DeviceDiscoveryResult {
+        DeviceDiscoveryResult(devices: devices)
     }
 
-    public func children(of path: RemotePath, on device: DeviceID) async throws -> [RemoteEntry] {
+    public func children(of path: RemotePath, on session: DeviceSession) async throws -> [RemoteEntry] {
+        let device = session.deviceID
         guard devices.contains(where: { $0.id == device && $0.state == .device }) else {
             throw EngineError.deviceUnavailable(device)
         }
@@ -107,7 +108,8 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteDestinationAccess {
             .sorted { RemotePath.bytewiseLess($0.path, $1.path) }
     }
 
-    public func metadata(of path: RemotePath, on device: DeviceID) async throws -> RemoteEntry {
+    public func metadata(of path: RemotePath, on session: DeviceSession) async throws -> RemoteEntry {
+        let device = session.deviceID
         guard devices.contains(where: { $0.id == device && $0.state == .device }) else {
             throw EngineError.deviceUnavailable(device)
         }
@@ -118,14 +120,15 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteDestinationAccess {
         return entry
     }
 
-    public func inspectDestinations(_ paths: [RemotePath], on device: DeviceID) async throws -> [RemotePath: RemoteDestinationState] {
+    public func inspectDestinations(_ paths: [RemotePath], on session: DeviceSession) async throws -> [RemotePath: RemoteDestinationState] {
         destinationBatches.append(paths)
         var states: [RemotePath: RemoteDestinationState] = [:]
-        for path in paths { states[path] = try await inspectDestination(path, on: device) }
+        for path in paths { states[path] = try await inspectDestination(path, on: session) }
         return states
     }
 
-    public func inspectDestination(_ path: RemotePath, on device: DeviceID) async throws -> RemoteDestinationState {
+    public func inspectDestination(_ path: RemotePath, on session: DeviceSession) async throws -> RemoteDestinationState {
+        let device = session.deviceID
         guard devices.contains(where: { $0.id == device && $0.state == .device }) else {
             throw EngineError.deviceUnavailable(device)
         }
@@ -139,17 +142,19 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteDestinationAccess {
         }
     }
 
-    public func createDestinationDirectory(_ path: RemotePath, on device: DeviceID) async throws {
-        if case .directory = try await inspectDestination(path, on: device) { return }
-        guard case .missing = try await inspectDestination(path, on: device) else {
+    public func createDestinationDirectory(_ path: RemotePath, on session: DeviceSession) async throws {
+        let device = session.deviceID
+        if case .directory = try await inspectDestination(path, on: session) { return }
+        guard case .missing = try await inspectDestination(path, on: session) else {
             throw EngineError.destinationConflict(TransferConflict(destination: path.description, kind: .directoryExists))
         }
         seed(RemoteEntry(path: path, kind: .directory), on: device)
     }
 
-    public func publishStagedFile(from localURL: URL, to path: RemotePath, on device: DeviceID,
+    public func publishStagedFile(from localURL: URL, to path: RemotePath, on session: DeviceSession,
                                   expected: ContentObjectReference, replacing identity: String?) async throws {
-        let state = try await inspectDestination(path, on: device)
+        let device = session.deviceID
+        let state = try await inspectDestination(path, on: session)
         switch state {
         case .missing:
             guard identity == nil || identity == RestoreConflict.approvedMissingTargetIdentity else {
@@ -182,7 +187,8 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteDestinationAccess {
         }
     }
 
-    public func pull(from path: RemotePath, on device: DeviceID, to localURL: URL) async throws {
+    public func pull(from path: RemotePath, on session: DeviceSession, to localURL: URL) async throws {
+        let device = session.deviceID
         guard devices.contains(where: { $0.id == device && $0.state == .device }) else {
             throw EngineError.deviceUnavailable(device)
         }
@@ -196,7 +202,8 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteDestinationAccess {
         }
     }
 
-    public func push(from localURL: URL, to path: RemotePath, on device: DeviceID) async throws {
+    public func push(from localURL: URL, to path: RemotePath, on session: DeviceSession) async throws {
+        let device = session.deviceID
         guard devices.contains(where: { $0.id == device && $0.state == .device }) else {
             throw EngineError.deviceUnavailable(device)
         }
@@ -300,9 +307,9 @@ public actor FakeBackupRepositoryStore: BackupRepositoryWriting {
         if let existing = stored.values.map(\.0).first(where: {
             $0.deviceID == device.id && $0.location.deletingLastPathComponent().deletingLastPathComponent() == root
         }) { return existing }
-        let repositoryPath = root.appendingPathComponent("PhoneBackup/device-\(device.id.serial)", isDirectory: true)
+        let repositoryPath = root.appendingPathComponent("PhoneBackup/device-\(device.id.value)", isDirectory: true)
         let repository = BackupRepositoryInfo(location: repositoryPath, deviceID: device.id,
-                                              displayName: device.model ?? device.id.serial)
+                                              displayName: device.model ?? "Android device")
         seed(repository: repository)
         return repository
     }

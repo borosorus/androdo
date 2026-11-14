@@ -27,7 +27,7 @@ final class OperationPresentationTests: XCTestCase {
     }
 
     func testRecoveryWithoutCurrentOperationHasAnExplanation() throws {
-        let attempt = BackupAttempt(id: BackupAttemptID(), repository: RepositoryID(), device: try DeviceID(serial: "fixture"),
+        let attempt = BackupAttempt(id: BackupAttemptID(), repository: RepositoryID(), device: try DeviceID(value: "fixture"),
                                     selection: BackupSelection(), startedAt: .now, state: .interrupted, omissions: [], checkpointCount: 3)
         let value = OperationPresentation(kind: nil, event: nil, isRunning: false, recovery: attempt, pendingCount: 1)
         XCTAssertEqual(value.title, "Backup interrupted")

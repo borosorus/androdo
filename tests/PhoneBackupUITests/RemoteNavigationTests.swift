@@ -4,12 +4,12 @@ import XCTest
 
 @MainActor
 final class RemoteNavigationTests: XCTestCase {
-    private let id = try! DeviceID(serial: "navigation-fixture")
+    private let id = try! DeviceID(value: "navigation-fixture")
 
     func testConcurrentInitialOpensShareOneShallowRequest() async throws {
         let remote = ControlledDirectoryAccess()
         let browser = RemoteBrowserModel(remote: remote)
-        browser.setDevice(AndroidDevice(id: id, state: .device))
+        browser.setDevice(fixtureDevice(id: id, state: .device))
         let root = RemoteBrowserModel.sharedStorage
         let first = Task { await browser.openRoot() }
         let second = Task { await browser.openRoot() }
@@ -26,7 +26,7 @@ final class RemoteNavigationTests: XCTestCase {
     func testSupersededRequestIsCancelledAndLateFailureCannotReplaceNewFolder() async throws {
         let remote = ControlledDirectoryAccess(ignoreCancellation: true)
         let browser = RemoteBrowserModel(remote: remote)
-        browser.setDevice(AndroidDevice(id: id, state: .device))
+        browser.setDevice(fixtureDevice(id: id, state: .device))
         let a = try RemotePath("/sdcard/A")
         let b = try RemotePath("/sdcard/B")
         let old = Task { await browser.navigate(to: a) }
@@ -49,7 +49,7 @@ final class RemoteNavigationTests: XCTestCase {
     func testExplicitCancelRestoresThePreviousListing() async throws {
         let remote = ControlledDirectoryAccess()
         let browser = RemoteBrowserModel(remote: remote)
-        browser.setDevice(AndroidDevice(id: id, state: .device))
+        browser.setDevice(fixtureDevice(id: id, state: .device))
         let root = RemoteBrowserModel.sharedStorage
         let folder = try root.appending("A")
         let rootTask = Task { await browser.openRoot() }
@@ -67,12 +67,12 @@ final class RemoteNavigationTests: XCTestCase {
     }
 
     func testBackForwardUsesVisitedCacheWhileRefreshAndInvalidationReadAgain() async throws {
-        let remote = FakeDeviceTransport(devices: [AndroidDevice(id: id, state: .device)])
+        let remote = FakeDeviceTransport(devices: [fixtureDevice(id: id, state: .device)])
         let root = RemoteBrowserModel.sharedStorage
         let folder = try root.appending("A")
         await remote.seed(RemoteEntry(path: folder, kind: .directory), on: id)
         let browser = RemoteBrowserModel(remote: remote)
-        browser.setDevice(AndroidDevice(id: id, state: .device))
+        browser.setDevice(fixtureDevice(id: id, state: .device))
         await browser.openRoot()
         await browser.navigate(to: folder)
         await browser.goBack()
@@ -91,7 +91,7 @@ final class RemoteNavigationTests: XCTestCase {
     func testCachedNavigationWhileAnotherFolderLoadsCannotRestoreSuspendedRows() async throws {
         let remote = ControlledDirectoryAccess()
         let browser = RemoteBrowserModel(remote: remote)
-        browser.setDevice(AndroidDevice(id: id, state: .device))
+        browser.setDevice(fixtureDevice(id: id, state: .device))
         let root = RemoteBrowserModel.sharedStorage
         let a = try root.appending("A")
         let b = try a.appending("B")
@@ -120,12 +120,12 @@ final class RemoteNavigationTests: XCTestCase {
     }
 
     func testLeavingAFailedFolderPreservesTheErrorAndRootFailureIsNotOpened() async throws {
-        let remote = FakeDeviceTransport(devices: [AndroidDevice(id: id, state: .device)])
+        let remote = FakeDeviceTransport(devices: [fixtureDevice(id: id, state: .device)])
         let root = RemoteBrowserModel.sharedStorage
         await remote.seed(RemoteEntry(path: root, kind: .directory), on: id)
         await remote.failNext(.inaccessiblePath(root), operation: .children, at: root, on: id)
         let browser = RemoteBrowserModel(remote: remote)
-        browser.setDevice(AndroidDevice(id: id, state: .device))
+        browser.setDevice(fixtureDevice(id: id, state: .device))
         await browser.openRoot()
         let error = browser.errorMessage
         XCTAssertNotNil(error)
@@ -141,7 +141,7 @@ final class RemoteNavigationTests: XCTestCase {
         let remote = ImmediateDirectoryAccess()
         await remote.set([RemoteEntry(path: folder, kind: .directory)], at: root)
         let browser = RemoteBrowserModel(remote: remote)
-        browser.setDevice(AndroidDevice(id: id, state: .device))
+        browser.setDevice(fixtureDevice(id: id, state: .device))
         await browser.openRoot()
         let large = try (0..<20_001).map { RemoteEntry(path: try root.appending("file-\($0).txt"), kind: .file, size: 0) }
         await remote.set(large, at: root)
@@ -154,13 +154,13 @@ final class RemoteNavigationTests: XCTestCase {
     }
 
     func testNavigationAndRefreshKeepSelectionInsideVisibleRows() async throws {
-        let remote = FakeDeviceTransport(devices: [AndroidDevice(id: id, state: .device)])
+        let remote = FakeDeviceTransport(devices: [fixtureDevice(id: id, state: .device)])
         let root = RemoteBrowserModel.sharedStorage
         let folder = try root.appending("A")
         let file = try folder.appending("file.txt")
         await remote.seed(RemoteEntry(path: file, kind: .file, size: 1), on: id, data: Data([1]))
         let browser = RemoteBrowserModel(remote: remote)
-        browser.setDevice(AndroidDevice(id: id, state: .device))
+        browser.setDevice(fixtureDevice(id: id, state: .device))
         await browser.openRoot()
         browser.selection = [folder]
         await browser.navigate(to: folder)
@@ -176,7 +176,7 @@ final class RemoteNavigationTests: XCTestCase {
     func testDeviceChangeDiscardsPendingResponseAndVisitedCache() async throws {
         let remote = ControlledDirectoryAccess(ignoreCancellation: true)
         let browser = RemoteBrowserModel(remote: remote)
-        browser.setDevice(AndroidDevice(id: id, state: .device))
+        browser.setDevice(fixtureDevice(id: id, state: .device))
         let root = RemoteBrowserModel.sharedStorage
         let pending = Task { await browser.openRoot() }
         await remote.waitForRequest(root)
@@ -202,7 +202,7 @@ private actor ControlledDirectoryAccess: RemoteFileAccess {
 
     init(ignoreCancellation: Bool = false) { self.ignoreCancellation = ignoreCancellation }
 
-    func children(of path: RemotePath, on device: DeviceID) async throws -> [RemoteEntry] {
+    func children(of path: RemotePath, on session: DeviceSession) async throws -> [RemoteEntry] {
         let token = UUID()
         calls.append(path)
         return try await withTaskCancellationHandler {
@@ -226,9 +226,9 @@ private actor ControlledDirectoryAccess: RemoteFileAccess {
         guard !ignoreCancellation, pending[path]?.token == token else { return }
         pending.removeValue(forKey: path)?.continuation.resume(throwing: CancellationError())
     }
-    func metadata(of path: RemotePath, on device: DeviceID) async throws -> RemoteEntry { throw EngineError.missingPath(path) }
-    func pull(from path: RemotePath, on device: DeviceID, to localURL: URL) async throws { throw EngineError.missingPath(path) }
-    func push(from localURL: URL, to path: RemotePath, on device: DeviceID) async throws { throw EngineError.missingPath(path) }
+    func metadata(of path: RemotePath, on session: DeviceSession) async throws -> RemoteEntry { throw EngineError.missingPath(path) }
+    func pull(from path: RemotePath, on session: DeviceSession, to localURL: URL) async throws { throw EngineError.missingPath(path) }
+    func push(from localURL: URL, to path: RemotePath, on session: DeviceSession) async throws { throw EngineError.missingPath(path) }
 }
 
 
@@ -236,8 +236,8 @@ private actor ImmediateDirectoryAccess: RemoteFileAccess {
     private var listings: [RemotePath: [RemoteEntry]] = [:]
     private(set) var calls: [RemotePath] = []
     func set(_ entries: [RemoteEntry], at path: RemotePath) { listings[path] = entries }
-    func children(of path: RemotePath, on device: DeviceID) async throws -> [RemoteEntry] { calls.append(path); return listings[path] ?? [] }
-    func metadata(of path: RemotePath, on device: DeviceID) async throws -> RemoteEntry { throw EngineError.missingPath(path) }
-    func pull(from path: RemotePath, on device: DeviceID, to localURL: URL) async throws { throw EngineError.missingPath(path) }
-    func push(from localURL: URL, to path: RemotePath, on device: DeviceID) async throws { throw EngineError.missingPath(path) }
+    func children(of path: RemotePath, on session: DeviceSession) async throws -> [RemoteEntry] { calls.append(path); return listings[path] ?? [] }
+    func metadata(of path: RemotePath, on session: DeviceSession) async throws -> RemoteEntry { throw EngineError.missingPath(path) }
+    func pull(from path: RemotePath, on session: DeviceSession, to localURL: URL) async throws { throw EngineError.missingPath(path) }
+    func push(from localURL: URL, to path: RemotePath, on session: DeviceSession) async throws { throw EngineError.missingPath(path) }
 }

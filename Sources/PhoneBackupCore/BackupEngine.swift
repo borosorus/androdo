@@ -5,7 +5,7 @@ import Darwin
 public actor DefaultBackupEngine: BackupEngine {
     private struct Request: Sendable {
         let repository: RepositoryID
-        let device: DeviceID
+        let session: DeviceSession
         let selection: BackupSelection
     }
 
@@ -60,9 +60,9 @@ public actor DefaultBackupEngine: BackupEngine {
         self.maximumTransferAttempts = max(1, maximumTransferAttempts)
     }
 
-    public func plan(repository: RepositoryID, device: DeviceID, selection: BackupSelection) async throws -> BackupPlan {
+    public func plan(repository: RepositoryID, session: DeviceSession, selection: BackupSelection) async throws -> BackupPlan {
         guard !selection.normalizedRoots.isEmpty else { throw EngineError.emptySelection }
-        let repositoryInfo = try await requireRepository(repository, for: device)
+        let repositoryInfo = try await requireRepository(repository, for: session.deviceID)
         let previous = try await latestPoint(in: repository)
         let priorEntries: [BackupEntry]
         if let previous {
@@ -70,10 +70,10 @@ public actor DefaultBackupEngine: BackupEngine {
         } else {
             priorEntries = []
         }
-        let scan = try await scan(selection: selection, device: device, operation: nil)
-        let plan = try await makePlan(repository: repository, device: device, selection: selection,
+        let scan = try await scan(selection: selection, session: session, operation: nil)
+        let plan = try await makePlan(repository: repository, device: session.deviceID, selection: selection,
                                       scan: scan, priorEntries: priorEntries)
-        plannedRequests[plan.id] = Request(repository: repositoryInfo.id, device: device, selection: selection)
+        plannedRequests[plan.id] = Request(repository: repositoryInfo.id, session: session, selection: selection)
         return plan
     }
 
@@ -84,14 +84,17 @@ public actor DefaultBackupEngine: BackupEngine {
         return try await launch(request: request, attempt: nil, omissions: omissions)
     }
 
-    public func resumeBackup(_ attempt: BackupAttemptID, omissions: BackupOmissionChoice = .requireComplete) async throws -> OperationID {
+    public func resumeBackup(_ attempt: BackupAttemptID, using session: DeviceSession,
+                             omissions: BackupOmissionChoice = .requireComplete) async throws -> OperationID {
         let storedAttempt = try await findAttempt(attempt)
-        let request = Request(repository: storedAttempt.repository, device: storedAttempt.device, selection: storedAttempt.selection)
+        guard storedAttempt.device == session.deviceID else { throw EngineError.deviceUnavailable(session.deviceID) }
+        let request = Request(repository: storedAttempt.repository, session: session, selection: storedAttempt.selection)
         return try await launch(request: request, attempt: storedAttempt, omissions: omissions)
     }
 
-    public func finishWithOmissions(_ attempt: BackupAttemptID) async throws -> OperationID {
-        try await resumeBackup(attempt, omissions: .finishWithOmissions)
+    public func finishWithOmissions(_ attempt: BackupAttemptID, using session: DeviceSession,
+                                    omissions: BackupOmissionChoice = .finishWithOmissions) async throws -> OperationID {
+        try await resumeBackup(attempt, using: session, omissions: omissions)
     }
 
     public func attempts(in repository: RepositoryID) async throws -> [BackupAttempt] {
@@ -132,13 +135,13 @@ public actor DefaultBackupEngine: BackupEngine {
             throw EngineError.repositoryBusy(info.location)
         }
         do {
-            _ = try await requireRepository(request.repository, for: request.device)
+            _ = try await requireRepository(request.repository, for: request.session.deviceID)
             let attempt: BackupAttempt
             if let existingAttempt {
                 attempt = try await repositoryStore.backupAttempt(existingAttempt.id, in: request.repository)
                 try await repositoryStore.updateBackupAttempt(attempt.id, in: request.repository, state: .running, omissions: attempt.omissions)
             } else {
-                attempt = try await repositoryStore.beginBackupAttempt(in: request.repository, device: request.device, selection: request.selection)
+                attempt = try await repositoryStore.beginBackupAttempt(in: request.repository, device: request.session.deviceID, selection: request.selection)
             }
             let operation = OperationID()
             attemptsByOperation[operation] = attempt.id
@@ -163,7 +166,7 @@ public actor DefaultBackupEngine: BackupEngine {
         }
         do {
             try Task.checkCancellation()
-            let scanResult = try await scan(selection: request.selection, device: request.device, operation: operation)
+            let scanResult = try await scan(selection: request.selection, session: request.session, operation: operation)
             currentOmissions = scanResult.omissions
             emit(OperationEvent(operationID: operation, phase: .planning,
                                 progress: OperationProgress(completedItems: scanResult.visitedCount), warnings: currentOmissions), for: operation)
@@ -219,7 +222,7 @@ public actor DefaultBackupEngine: BackupEngine {
                                                        modifiedAt: entry.modifiedAt, contentHash: reference.sha256))
                     continue
                 }
-                let result = try await transfer(entry, device: request.device, repository: request.repository,
+                let result = try await transfer(entry, session: request.session, repository: request.repository,
                                                 attempt: attempt.id, operation: operation)
                 currentOmissions.append(contentsOf: result.omissions)
                 if let transferred = result.entry {
@@ -293,7 +296,7 @@ public actor DefaultBackupEngine: BackupEngine {
         }
     }
 
-    private func scan(selection: BackupSelection, device: DeviceID, operation: OperationID?) async throws -> ScanResult {
+    private func scan(selection: BackupSelection, session: DeviceSession, operation: OperationID?) async throws -> ScanResult {
         guard !selection.normalizedRoots.isEmpty else { throw EngineError.emptySelection }
         var result = ScanResult()
         let visited = VisitedPaths()
@@ -301,8 +304,8 @@ public actor DefaultBackupEngine: BackupEngine {
             try Task.checkCancellation()
             guard selection.includes(root) else { continue }
             do {
-                let entry = try await remote.metadata(of: root, on: device)
-                result.merge(try await scan(entry, selection: selection, device: device, visited: visited, operation: operation))
+                let entry = try await remote.metadata(of: root, on: session)
+                result.merge(try await scan(entry, selection: selection, session: session, visited: visited, operation: operation))
             } catch let error as EngineError {
                 if let warning = Self.omission(for: error, path: root) { result.omissions.append(warning) }
                 else { throw error }
@@ -314,7 +317,7 @@ public actor DefaultBackupEngine: BackupEngine {
         return result
     }
 
-    private func scan(_ entry: RemoteEntry, selection: BackupSelection, device: DeviceID,
+    private func scan(_ entry: RemoteEntry, selection: BackupSelection, session: DeviceSession,
                       visited: VisitedPaths, operation: OperationID?) async throws -> ScanResult {
         try Task.checkCancellation()
         guard selection.includes(entry.path), visited.paths.insert(entry.path).inserted else { return ScanResult() }
@@ -333,7 +336,7 @@ public actor DefaultBackupEngine: BackupEngine {
         case .directory:
             result.entries.append(RemoteEntry(path: entry.path, kind: .directory, size: nil, modifiedAt: entry.modifiedAt))
             do {
-                let children = try await remote.children(of: entry.path, on: device)
+                let children = try await remote.children(of: entry.path, on: session)
                 for child in children.sorted(by: { RemotePath.bytewiseLess($0.path, $1.path) }) {
                     try Task.checkCancellation()
                     guard child.path.parent == entry.path else {
@@ -342,7 +345,7 @@ public actor DefaultBackupEngine: BackupEngine {
                         continue
                     }
                     if !selection.includes(child.path) { continue }
-                    result.merge(try await scan(child, selection: selection, device: device, visited: visited, operation: operation))
+                    result.merge(try await scan(child, selection: selection, session: session, visited: visited, operation: operation))
                 }
             } catch let error as EngineError {
                 if let warning = Self.omission(for: error, path: entry.path) { result.omissions.append(warning) }
@@ -355,13 +358,13 @@ public actor DefaultBackupEngine: BackupEngine {
         return result
     }
 
-    private func transfer(_ scanned: RemoteEntry, device: DeviceID, repository: RepositoryID,
+    private func transfer(_ scanned: RemoteEntry, session: DeviceSession, repository: RepositoryID,
                           attempt: BackupAttemptID, operation: OperationID) async throws -> (entry: BackupEntry?, omissions: [OperationWarning]) {
         var lastError: EngineError?
         for tryIndex in 0..<maximumTransferAttempts {
             try Task.checkCancellation()
             let before: RemoteEntry
-            do { before = try await remote.metadata(of: scanned.path, on: device) }
+            do { before = try await remote.metadata(of: scanned.path, on: session) }
             catch let error as EngineError {
                 if let warning = Self.omission(for: error, path: scanned.path) { return (nil, [warning]) }
                 throw error
@@ -373,8 +376,8 @@ public actor DefaultBackupEngine: BackupEngine {
             let localURL = stagingRoot.appendingPathComponent(UUID().uuidString.lowercased())
             do {
                 try Self.prepareStagingDirectory(stagingRoot)
-                try await remote.pull(from: scanned.path, on: device, to: localURL)
-                let after = try await remote.metadata(of: scanned.path, on: device)
+                try await remote.pull(from: scanned.path, on: session, to: localURL)
+                let after = try await remote.metadata(of: scanned.path, on: session)
                 let values = try localURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
                 guard after.kind == .file, after.size == expectedSize,
                       after.modifiedAt == before.modifiedAt,

@@ -73,8 +73,8 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
             throw Self.mapFilesystemError(error, location: managedRoot)
         }
 
-        let serialHash = Self.sha256(Data(device.id.serial.utf8))
-        let repositoryURL = managedRoot.appendingPathComponent("device-\(serialHash)", isDirectory: true)
+        let identityHash = Self.sha256(Data(device.id.value.utf8))
+        let repositoryURL = managedRoot.appendingPathComponent("device-\(identityHash)", isDirectory: true)
         if FileManager.default.fileExists(atPath: repositoryURL.path) {
             let info = try openExistingRepository(at: repositoryURL, selectedRoot: selectedRoot)
             guard info.deviceID == device.id else { throw EngineError.repositoryDeviceMismatch(info.id) }
@@ -318,7 +318,7 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
             let omissionsData = try JSONEncoder().encode([OperationWarning]())
             try handle.database.execute(
                 "INSERT INTO attempts(id, repository_id, device_serial, selection, started_at, state, omissions) VALUES(?, ?, ?, ?, ?, ?, ?)",
-                bindings: [.text(id.id.uuidString), .text(repository.id.uuidString), .text(device.serial),
+                bindings: [.text(id.id.uuidString), .text(repository.id.uuidString), .text(device.value),
                            .blob(selectionData), .real(startedAt.timeIntervalSince1970), .text(BackupAttemptState.running.rawValue),
                            .blob(omissionsData)]
             )
@@ -526,11 +526,12 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
             }
             try Self.createSchema(database)
             let id = RepositoryID()
-            let info = BackupRepositoryInfo(id: id, location: url, deviceID: device.id, displayName: device.model ?? device.id.serial)
+            let info = BackupRepositoryInfo(id: id, location: url, deviceID: device.id,
+                                           displayName: "Android device")
+            // Android properties are runtime identity evidence; persist only the opaque DeviceID.
             try database.execute(
                 "INSERT INTO repository(id, device_serial, model, product, display_name) VALUES(?, ?, ?, ?, ?)",
-                bindings: [.text(id.id.uuidString), .text(device.id.serial), device.model.map(SQLiteValue.text) ?? .null,
-                           device.product.map(SQLiteValue.text) ?? .null, .text(info.displayName)]
+                bindings: [.text(id.id.uuidString), .text(device.id.value), .null, .null, .text(info.displayName)]
             )
             try Self.syncDirectory(url)
             try Self.syncDirectory(url.deletingLastPathComponent())
@@ -573,14 +574,14 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
             let records: [(String, String, String)] = try database.rows(
                 "SELECT id, device_serial, display_name FROM repository LIMIT 1"
             ) { statement in
-                guard let id = sqliteText(statement, 0), let serial = sqliteText(statement, 1),
+                guard let id = sqliteText(statement, 0), let deviceValue = sqliteText(statement, 1),
                       let name = sqliteText(statement, 2) else { throw EngineError.corruptedRepository("Missing repository identity") }
-                return (id, serial, name)
+                return (id, deviceValue, name)
             }
             guard let record = records.first, let uuid = UUID(uuidString: record.0) else {
                 throw EngineError.corruptedRepository("Missing repository identity")
             }
-            let deviceID = try DeviceID(serial: record.1)
+            let deviceID = try DeviceID(value: record.1)
             let info = BackupRepositoryInfo(id: RepositoryID(uuid), location: url, deviceID: deviceID, displayName: record.2)
             if let existingHandle = open[info.id], existingHandle.info.location != info.location {
                 throw EngineError.repositoryBusy(info.location)
@@ -671,6 +672,8 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
         guard version == 0 || version == 2 else { throw EngineError.repositoryFormatUnsupported(version) }
         if version == 2 { return }
         try database.transaction {
+            // Retain the original schema so older repositories stay readable offline. New values in
+            // this column are opaque versioned DeviceIDs; legacy serial values never match a live device.
             try database.execute("CREATE TABLE repository(id TEXT PRIMARY KEY, device_serial TEXT NOT NULL, model TEXT, product TEXT, display_name TEXT NOT NULL)")
             try database.execute("CREATE TABLE objects(sha256 TEXT PRIMARY KEY, size INTEGER NOT NULL CHECK(size >= 0))")
             try database.execute("CREATE TABLE restore_points(id TEXT PRIMARY KEY, created_at REAL NOT NULL, state TEXT NOT NULL CHECK(state = 'completed'), selection BLOB NOT NULL, entry_count INTEGER NOT NULL, total_bytes INTEGER NOT NULL, omissions BLOB NOT NULL)")
@@ -706,14 +709,14 @@ public actor LocalBackupRepositoryStore: BackupRepositoryWriting {
     private static func decodeAttempt(_ statement: OpaquePointer) throws -> BackupAttempt {
         guard let rawID = sqliteText(statement, 0), let id = UUID(uuidString: rawID),
               let rawRepository = sqliteText(statement, 1), let repositoryUUID = UUID(uuidString: rawRepository),
-              let serial = sqliteText(statement, 2),
+              let deviceValue = sqliteText(statement, 2),
               let selectionData = sqliteBlob(statement, 3),
               let stateRaw = sqliteText(statement, 5), let state = BackupAttemptState(rawValue: stateRaw),
               let omissionsData = sqliteBlob(statement, 6) else {
             throw EngineError.corruptedRepository("Invalid backup attempt metadata")
         }
         return BackupAttempt(
-            id: BackupAttemptID(id), repository: RepositoryID(repositoryUUID), device: try DeviceID(serial: serial),
+            id: BackupAttemptID(id), repository: RepositoryID(repositoryUUID), device: try DeviceID(value: deviceValue),
             selection: try JSONDecoder().decode(BackupSelection.self, from: selectionData),
             startedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 4)), state: state,
             omissions: try JSONDecoder().decode([OperationWarning].self, from: omissionsData),

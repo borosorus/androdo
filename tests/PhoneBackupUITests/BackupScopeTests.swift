@@ -51,8 +51,8 @@ final class BackupScopeTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let preferences = AppPreferences(defaults: defaults)
-        let a = AndroidDevice(id: try DeviceID(serial: "scope-a"), state: .device)
-        let b = AndroidDevice(id: try DeviceID(serial: "scope-b"), state: .device)
+        let a = fixtureDevice(id: try DeviceID(value: "scope-a"), state: .device)
+        let b = fixtureDevice(id: try DeviceID(value: "scope-b"), state: .device)
         let transport = FakeDeviceTransport(devices: [a, b])
         let model = AppModel(services: AppServices(repositoryStore: FakeBackupRepositoryStore(), deviceTransport: transport, remoteAccess: transport),
                              preferences: preferences, loadOnStart: false)
@@ -75,8 +75,8 @@ final class BackupScopeTests: XCTestCase {
     }
 
     func testEditingAndModeChangesDoNotReadAnyMorePhoneFolders() async throws {
-        let id = try DeviceID(serial: "scope-browsing")
-        let device = AndroidDevice(id: id, state: .device)
+        let id = try DeviceID(value: "scope-browsing")
+        let device = fixtureDevice(id: id, state: .device)
         let remote = FakeDeviceTransport(devices: [device])
         let root = RemoteBrowserModel.sharedStorage
         let pictures = try root.appending("Pictures")

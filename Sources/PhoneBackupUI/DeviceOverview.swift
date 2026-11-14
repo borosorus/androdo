@@ -133,7 +133,7 @@ struct DeviceOverview: View {
     private var connectionActionTitle: String {
         guard model.hasADB else { return "Set Up Connection…" }
         guard let state = model.selectedDevice?.state else { return "Connect Your Phone…" }
-        switch state {
+        return switch state {
         case .unauthorized: "Authorize This Mac…"
         case .offline: "Reconnect Phone…"
         case .device: "Connection Setup…"

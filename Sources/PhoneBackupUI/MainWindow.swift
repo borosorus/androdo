@@ -50,7 +50,7 @@ public struct MainWindow: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(model.isBusy)
-                        .accessibilityLabel("Select \(device.model ?? "Android device") \(device.id.serial)")
+                        .accessibilityLabel("Select \(device.model ?? "Android device")")
                     }
                 }
             }

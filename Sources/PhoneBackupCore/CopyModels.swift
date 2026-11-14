@@ -1,8 +1,8 @@
 import Foundation
 
 public enum CopyRequest: Sendable {
-    case phoneToMac(device: DeviceID, roots: [RemotePath], destination: URL)
-    case macToPhone(device: DeviceID, sources: [URL], destination: RemotePath,
+    case phoneToMac(session: DeviceSession, roots: [RemotePath], destination: URL)
+    case macToPhone(session: DeviceSession, sources: [URL], destination: RemotePath,
                     replaceMissingTargets: Set<RemotePath> = [])
 }
 

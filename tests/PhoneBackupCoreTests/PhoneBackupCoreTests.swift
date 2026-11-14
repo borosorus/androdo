@@ -38,8 +38,8 @@ final class PhoneBackupCoreTests: XCTestCase {
     }
 
     func testModelsRoundTripThroughCodable() throws {
-        let deviceID = try DeviceID(serial: "test-serial")
-        let device = AndroidDevice(id: deviceID, state: .device, model: "Pixel", product: "pixel")
+        let deviceID = try DeviceID(value: "test-serial")
+        let device = fixtureDevice(id: deviceID, state: .device, model: "Pixel", product: "pixel")
         let path = try RemotePath("/sdcard/DCIM/photo.jpg")
         let event = OperationEvent(
             operationID: OperationID(),
@@ -48,7 +48,10 @@ final class PhoneBackupCoreTests: XCTestCase {
             warnings: [OperationWarning(code: .inaccessiblePath, path: path, message: "Access denied")]
         )
 
-        XCTAssertEqual(try JSONDecoder().decode(AndroidDevice.self, from: JSONEncoder().encode(device)), device)
+        let decodedDevice = try JSONDecoder().decode(AndroidDevice.self, from: JSONEncoder().encode(device))
+        XCTAssertEqual(decodedDevice.id, device.id)
+        XCTAssertEqual(decodedDevice.state, device.state)
+        XCTAssertTrue(decodedDevice.sessions.isEmpty, "ADB routes must never be encoded")
         XCTAssertEqual(try JSONDecoder().decode(OperationEvent.self, from: JSONEncoder().encode(event)), event)
         XCTAssertTrue(EngineError.inaccessiblePath(path).recoveryActions.contains(.chooseAccessiblePaths))
         XCTAssertEqual(
@@ -73,8 +76,8 @@ final class PhoneBackupCoreTests: XCTestCase {
     }
 
     func testFakeTransportListsOnlyImmediateChildrenInStableOrder() async throws {
-        let deviceID = try DeviceID(serial: "fake-1")
-        let device = AndroidDevice(id: deviceID, state: .device)
+        let deviceID = try DeviceID(value: "fake-1")
+        let device = fixtureDevice(id: deviceID, state: .device)
         let transport = FakeDeviceTransport(devices: [device])
         let root = try RemotePath("/sdcard")
         let folder = try root.appending("Pictures")
@@ -83,35 +86,38 @@ final class PhoneBackupCoreTests: XCTestCase {
         await transport.seed(RemoteEntry(path: folder, kind: .directory), on: deviceID)
 
         let connected = try await transport.connectedDevices()
-        let rootChildren = try await transport.children(of: root, on: deviceID)
-        let folderChildren = try await transport.children(of: folder, on: deviceID)
-        XCTAssertEqual(connected, [device])
+        let session = try XCTUnwrap(connected.devices.first?.preferredSession)
+        let rootChildren = try await transport.children(of: root, on: session)
+        let folderChildren = try await transport.children(of: folder, on: session)
+        XCTAssertEqual(connected.devices, [device])
         XCTAssertEqual(rootChildren.map(\.path), [folder])
         XCTAssertEqual(folderChildren.map(\.path), [nestedFile])
     }
 
     func testFakeTransportCopiesBytesBothDirections() async throws {
-        let deviceID = try DeviceID(serial: "fake-1")
-        let transport = FakeDeviceTransport(devices: [AndroidDevice(id: deviceID, state: .device)])
+        let deviceID = try DeviceID(value: "fake-1")
+        let device = fixtureDevice(id: deviceID, state: .device)
+        let transport = FakeDeviceTransport(devices: [device])
+        let session = try XCTUnwrap(device.preferredSession)
         let remotePath = try RemotePath("/sdcard/Documents/note.txt")
         let original = Data("round trip".utf8)
         await transport.seed(RemoteEntry(path: remotePath, kind: .file, size: Int64(original.count)), on: deviceID, data: original)
         let localURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: localURL) }
 
-        try await transport.pull(from: remotePath, on: deviceID, to: localURL)
+        try await transport.pull(from: remotePath, on: session, to: localURL)
         XCTAssertEqual(try Data(contentsOf: localURL), original)
 
         try Data("updated".utf8).write(to: localURL)
-        try await transport.push(from: localURL, to: remotePath, on: deviceID)
+        try await transport.push(from: localURL, to: remotePath, on: session)
         let secondCopy = localURL.deletingLastPathComponent().appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: secondCopy) }
-        try await transport.pull(from: remotePath, on: deviceID, to: secondCopy)
+        try await transport.pull(from: remotePath, on: session, to: secondCopy)
         XCTAssertEqual(try Data(contentsOf: secondCopy), Data("updated".utf8))
     }
 
     func testFakeRepositoryListsRestorePointsAndImmediateEntries() async throws {
-        let deviceID = try DeviceID(serial: "fake-1")
+        let deviceID = try DeviceID(value: "fake-1")
         let repository = BackupRepositoryInfo(location: URL(fileURLWithPath: "/tmp/PhoneBackup"), deviceID: deviceID, displayName: "Phone")
         let earlier = RestorePoint(createdAt: Date(timeIntervalSince1970: 1), state: .completed, entryCount: 1, totalBytes: 3)
         let later = RestorePoint(createdAt: Date(timeIntervalSince1970: 2), state: .completed, entryCount: 2, totalBytes: 7)

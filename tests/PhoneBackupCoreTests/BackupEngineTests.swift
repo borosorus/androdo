@@ -4,8 +4,8 @@ import XCTest
 
 final class BackupEngineTests: XCTestCase {
     func testScopedBackupPublishesSnapshotAndReusesUnchangedFiles() async throws {
-        let deviceID = try DeviceID(serial: "engine-test")
-        let device = AndroidDevice(id: deviceID, state: .device)
+        let deviceID = try DeviceID(value: "engine-test")
+        let device = fixtureDevice(id: deviceID, state: .device)
         let root = try RemotePath("/sdcard/Twitter")
         let file = try root.appending("image.jpg")
         let modified = Date(timeIntervalSince1970: 1_700_000_000)
@@ -20,7 +20,7 @@ final class BackupEngineTests: XCTestCase {
         let engine = DefaultBackupEngine(remote: transport, repositoryStore: store)
         let selection = BackupSelection(scope: .selected([root]))
 
-        let plan = try await engine.plan(repository: repository.id, device: deviceID, selection: selection)
+        let plan = try await engine.plan(repository: repository.id, session: device.preferredSession!, selection: selection)
         XCTAssertEqual(plan.fileCount, 1)
         XCTAssertEqual(plan.transferCount, 1)
         XCTAssertEqual(plan.bytesToTransfer, 5)
@@ -31,7 +31,7 @@ final class BackupEngineTests: XCTestCase {
         let firstPulls = await transport.recordedPulls(on: deviceID)
         XCTAssertEqual(firstPulls, [file])
 
-        let secondPlan = try await engine.plan(repository: repository.id, device: deviceID, selection: selection)
+        let secondPlan = try await engine.plan(repository: repository.id, session: device.preferredSession!, selection: selection)
         XCTAssertEqual(secondPlan.transferCount, 0)
         XCTAssertEqual(secondPlan.reusedCount, 1)
         let secondOperation = try await engine.startBackup(using: secondPlan.id)
@@ -45,7 +45,7 @@ final class BackupEngineTests: XCTestCase {
         XCTAssertEqual(points.first?.entryCount, 2) // Selected root and its file.
 
         await transport.remove(file, on: deviceID)
-        let deletionPlan = try await engine.plan(repository: repository.id, device: deviceID, selection: selection)
+        let deletionPlan = try await engine.plan(repository: repository.id, session: device.preferredSession!, selection: selection)
         XCTAssertEqual(deletionPlan.deletedCount, 1)
         XCTAssertEqual(deletionPlan.transferCount, 0)
         let deletionOperation = try await engine.startBackup(using: deletionPlan.id)
@@ -71,8 +71,8 @@ final class BackupEngineTests: XCTestCase {
     }
 
     func testInaccessibleSelectionStaysIncompleteUntilExplicitOmissionChoice() async throws {
-        let deviceID = try DeviceID(serial: "omission-test")
-        let device = AndroidDevice(id: deviceID, state: .device)
+        let deviceID = try DeviceID(value: "omission-test")
+        let device = fixtureDevice(id: deviceID, state: .device)
         let root = try RemotePath("/sdcard/Twitter")
         let transport = FakeDeviceTransport(devices: [device])
         await transport.seed(RemoteEntry(path: root, kind: .directory), on: deviceID)
@@ -87,7 +87,7 @@ final class BackupEngineTests: XCTestCase {
         let engine = DefaultBackupEngine(remote: transport, repositoryStore: store)
         let selection = BackupSelection(scope: .selected([root]))
 
-        let plan = try await engine.plan(repository: repository.id, device: deviceID, selection: selection)
+        let plan = try await engine.plan(repository: repository.id, session: device.preferredSession!, selection: selection)
         XCTAssertEqual(plan.omissions.count, 1)
         let operation = try await engine.startBackup(using: plan.id)
         let events = await collectEvents(from: engine, operation: operation)
@@ -98,7 +98,7 @@ final class BackupEngineTests: XCTestCase {
         let attempts = try await engine.attempts(in: repository.id)
         let attempt = try XCTUnwrap(attempts.first)
         XCTAssertEqual(attempt.state, .needsOmissionDecision)
-        let acceptedOperation = try await engine.finishWithOmissions(attempt.id)
+        let acceptedOperation = try await engine.finishWithOmissions(attempt.id, using: device.preferredSession!)
         let acceptedEvents = await collectEvents(from: engine, operation: acceptedOperation)
         XCTAssertEqual(acceptedEvents.last?.phase, .completed)
         let points = try await store.restorePoints(in: repository.id)
@@ -108,8 +108,8 @@ final class BackupEngineTests: XCTestCase {
     }
 
     func testOmissionApprovalDoesNotCarryOverToANewlyBlockedPath() async throws {
-        let deviceID = try DeviceID(serial: "stale-omission-test")
-        let device = AndroidDevice(id: deviceID, state: .device)
+        let deviceID = try DeviceID(value: "stale-omission-test")
+        let device = fixtureDevice(id: deviceID, state: .device)
         let root = try RemotePath("/sdcard/Twitter")
         let nested = try root.appending("Private")
         let transport = FakeDeviceTransport(devices: [device])
@@ -125,14 +125,14 @@ final class BackupEngineTests: XCTestCase {
         let engine = DefaultBackupEngine(remote: transport, repositoryStore: store)
         let selection = BackupSelection(scope: .selected([root]))
 
-        let plan = try await engine.plan(repository: repository.id, device: deviceID, selection: selection)
+        let plan = try await engine.plan(repository: repository.id, session: device.preferredSession!, selection: selection)
         let operation = try await engine.startBackup(using: plan.id)
         let initialEvents = await collectEvents(from: engine, operation: operation)
         XCTAssertEqual(initialEvents.last?.phase, .incomplete)
 
         let initialAttempts = try await engine.attempts(in: repository.id)
         let attempt = try XCTUnwrap(initialAttempts.first)
-        let retry = try await engine.finishWithOmissions(attempt.id)
+        let retry = try await engine.finishWithOmissions(attempt.id, using: device.preferredSession!)
         let retryEvents = await collectEvents(from: engine, operation: retry)
         XCTAssertEqual(retryEvents.last?.phase, .incomplete)
         let pointsAfterNewOmission = try await store.restorePoints(in: repository.id)
@@ -140,14 +140,14 @@ final class BackupEngineTests: XCTestCase {
 
         let updatedAttempts = try await engine.attempts(in: repository.id)
         let updatedAttempt = try XCTUnwrap(updatedAttempts.first)
-        let acceptedRetry = try await engine.finishWithOmissions(updatedAttempt.id)
+        let acceptedRetry = try await engine.finishWithOmissions(updatedAttempt.id, using: device.preferredSession!)
         let acceptedEvents = await collectEvents(from: engine, operation: acceptedRetry)
         XCTAssertEqual(acceptedEvents.last?.phase, .completed)
     }
 
     func testFileMutationDuringPullIsRetriedBeforePublishing() async throws {
-        let deviceID = try DeviceID(serial: "mutation-test")
-        let device = AndroidDevice(id: deviceID, state: .device)
+        let deviceID = try DeviceID(value: "mutation-test")
+        let device = fixtureDevice(id: deviceID, state: .device)
         let root = try RemotePath("/sdcard/Twitter")
         let file = try root.appending("image.jpg")
         let oldDate = Date(timeIntervalSince1970: 1_700_000_000)
@@ -165,7 +165,7 @@ final class BackupEngineTests: XCTestCase {
         let engine = DefaultBackupEngine(remote: transport, repositoryStore: store)
         let selection = BackupSelection(scope: .selected([root]))
 
-        let plan = try await engine.plan(repository: repository.id, device: deviceID, selection: selection)
+        let plan = try await engine.plan(repository: repository.id, session: device.preferredSession!, selection: selection)
         let operation = try await engine.startBackup(using: plan.id)
         let events = await collectEvents(from: engine, operation: operation)
         XCTAssertEqual(events.last?.phase, .completed)

@@ -124,7 +124,7 @@ final class RestorePlanningTests: XCTestCase {
 @MainActor
 private final class RestoreFixture {
     let root: URL
-    let device = AndroidDevice(id: try! DeviceID(serial: "restore-ui-fixture"), state: .device)
+    let device = fixtureDevice(id: try! DeviceID(value: "restore-ui-fixture"), state: .device)
     let remote: FakeDeviceTransport
     let store = FakeBackupRepositoryStore()
     let model: AppModel

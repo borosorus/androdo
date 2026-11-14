@@ -10,14 +10,14 @@ final class PreferencesAndMappingTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let preferences = AppPreferences(defaults: defaults)
-        let device = try DeviceID(serial: "pixel-test")
+        let device = try DeviceID(value: "pixel-test")
         let chosen = try RemotePath("/sdcard/Pictures/Camera")
         let selection = BackupSelection(scope: .selected([chosen]))
 
         preferences.save(selection, for: device)
 
         XCTAssertEqual(preferences.selection(for: device), selection)
-        XCTAssertEqual(preferences.selection(for: try DeviceID(serial: "another-device")), BackupSelection())
+        XCTAssertEqual(preferences.selection(for: try DeviceID(value: "another-device")), BackupSelection())
     }
 
     func testExportBaseUsesSharedPathComponentsOnly() throws {
@@ -43,8 +43,8 @@ final class PreferencesAndMappingTests: XCTestCase {
     }
 
     func testDeviceDiscoveryDoesNotEnumeratePhoneFolders() async throws {
-        let id = try DeviceID(serial: "ui-test-device")
-        let device = AndroidDevice(id: id, state: .device)
+        let id = try DeviceID(value: "ui-test-device")
+        let device = fixtureDevice(id: id, state: .device)
         let transport = FakeDeviceTransport(devices: [device])
         let store = FakeBackupRepositoryStore()
         let services = AppServices(repositoryStore: store, deviceTransport: transport, remoteAccess: transport)

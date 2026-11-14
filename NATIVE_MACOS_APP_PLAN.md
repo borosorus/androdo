@@ -4,7 +4,7 @@
 
 Build a native SwiftUI macOS app with a new Swift engine for selective Android shared-file backups, complete restore points, restore to Mac or phone, and companion phone-to-Mac / Mac-to-phone file copy.
 
-V1 is manual, unencrypted, USB/ADB based, and stores an app-managed repository under a folder the user chooses. It may include `Android/media`, `Android/data`, and `Android/obb` only when the connected device exposes them to ADB. Report unavailable paths; never claim app-private data, settings, or a whole-device restore.
+V1 is manual, unencrypted, and ADB based. USB is the baseline; Steps 8.16–8.18 add explicit Android wireless debugging support. Backups stay in an app-managed repository under a folder the user chooses. They may include `Android/media`, `Android/data`, and `Android/obb` only when the connected device exposes them to ADB. Report unavailable paths; never claim app-private data, settings, or a whole-device restore.
 
 The Python CLI remains as reference code. No Python runtime or backup-format compatibility is required. Preserve the untracked `PhoneBackupTrial/` user backup; do not use it as a fixture, package resource, or commit candidate.
 
@@ -39,6 +39,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 8.10 — Stabilize connected-device refresh, expose Settings and rename File Explorer. Commit: `fix(ui): stabilize sidebar controls and expose settings`. Review: approved.
 - [x] Step 8.11 — Plan phone restores with progress, explicit conflict handling and one batch review. Commit: `fix(restore): plan and approve phone restores as a batch`. Review: approved after policy, lookup and sheet-lifecycle fixes.
 - [x] Step 8.12 — Add foreground/background progress across preparation and transfers. Commit: `feat(ui): add foreground and background operation progress`. Review: approved after window and phone-sheet lifetime fixes.
+- [x] Step 8.16 — Separate durable Android identity from USB/Wi-Fi ADB routes. Commit: `refactor(adb): separate device identity from connection routing`. Review: approved; manual USB/Wi-Fi continuity check remains for wireless acceptance.
 - [ ] Step 9 — Complete packaging, CI, and end-to-end acceptance. Local packaging and CI committed as `build(macOS): package app and add acceptance checks`; reviewer approved. Phone acceptance remains pending an explicitly selected disposable folder.
 
 ## Steps
@@ -285,6 +286,40 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 **Implementation complete:** Added the reusable four-step guide with manufacturer-variation notes, phone-state guidance, Google documentation links, and an accurate explanation of ADB trust/privacy. Connection Setup foregrounds the phone guide once ADB exists and keeps installation options available in a disclosure; Overview labels connection actions by state, and disconnected File Explorer opens the same guide plus a direct documentation link. README and manual acceptance notes were updated. Reviewer approved after the shared-storage-root behavior was clarified. `git diff --check` passed; no build or tests were run and no phone folders were accessed. Manual visual/accessibility acceptance remains open. Commit: `feat(ui): add contextual Android connection guide`.
 
+### Step 8.16 — Separate durable device identity from ADB routing
+
+**Planner-approved plan:** ADB’s selector identifies a current connection; it is not the phone’s durable identity. Query `ro.serialno`, `ro.product.manufacturer`, and `ro.product.model` through each authorized ADB connection. Derive a versioned opaque `DeviceID` from a domain tag and length-prefixed UTF-8 values. Keep raw values and ADB selectors in memory only. Reject missing, placeholder, malformed, oversized, or inconsistent identity evidence. Do not use model alone, IP address, mDNS name, Wi-Fi GUID, or ADB `transport_id` as durable identity. No USB enrollment or legacy identity bridge is required. Existing repositories remain untouched; new identity records use the new opaque identity.
+
+**Implementation slice:** This step leaves a working USB-only app while establishing the identity/session contract needed by wireless. After the step, `DeviceID` means only the stable opaque phone identity; a separate runtime `ADBConnectionSession` carries the ADB selector, optional transport ID, connection kind, and generation. Probe the full property tuple with one bounded, framed ADB command; create one logical device per verified identity; and show unresolved connections without allowing file operations or repository creation. Update the engine contracts, operation plans, AppModel, browsers, and all ADB command paths together so each active operation carries an immutable session. Route every command, including restore publication and cleanup, only through that session; stop when it is lost and require explicit retry/resume through a newly verified session. Prefer USB only when beginning a new operation. Persist only the versioned digest as the device identity. Existing repositories remain untouched and browsable offline, but are not automatically associated with new identities.
+
+**Automated acceptance:** Deterministic fake-only coverage proves tuple framing and validation, same-phone USB/Wi-Fi deduplication, different-phone separation, unresolved identity blocking, no raw property/endpoint persistence, captured-session routing, connection loss, endpoint reuse, and rejection of stale discovery/plans/results. Guarded shell-v2 transfers stream binary data, hold uploads until identity readiness, and clean up only transfer-owned output. Timeout, cancellation, destination races, and nonregular upload sources are covered. Existing repositories remain readable offline and byte-for-byte unchanged. No test may invoke ADB against a connected phone.
+
+**Commit:** `refactor(adb): separate device identity from connection routing`.
+
+**Review/acceptance:** Reviewer checks that no persisted identifier is used as an ADB selector, runtime selectors and transport IDs never enter repositories/preferences/activity/errors, simultaneous links deduplicate only on the full validated tuple, and a refreshed connection cannot retarget an approved plan. Manual device acceptance compares USB and Wi-Fi identity for the same phone and confirms two same-model phones stay separate. Identity discovery reads only the three system properties; it does not list or read phone folders.
+
+**Implementation complete:** Device identity is a versioned SHA-256 digest of validated serial/manufacturer/model evidence. USB and wireless sessions for the same evidence deduplicate into one logical phone, while each operation captures an immutable, generation-checked route. Persisted model/product/route details are omitted; new repositories store only the opaque ID and generic display name. Shell transfers validate that same identity on the selected transport; binary pulls use file-backed output and pushes wait for an identity-guarded READY handshake before sending bytes. ADBTransport tests passed 37/37, including USB/Wi-Fi route deduplication, identity mismatch blocking, binary streaming, no-writer FIFO rejection, output cleanup ownership, and destination-race preservation. `git diff --check` passed. Tests used fakes and local temporary files only; no phone folders were accessed. Manual continuity acceptance remains open for the wireless device-flow steps.
+
+### Step 8.17 — Add the wireless ADB pairing service
+
+**Deliverable:** Add a core wireless pairing/connection service, separate pairing and connection endpoints, input-capable bounded command execution, ADB capability detection, requested-endpoint verification, cancellation, and structured actionable errors. Keep the pairing code out of command arguments, preferences, Activity, errors, and diagnostics. An already paired device can be connected directly without repeating pairing. This service has no UI or automatic LAN scan.
+
+**Commit:** `feat(adb): add wireless pairing service`.
+
+**Automated acceptance:** Fake-runner fixtures cover endpoint/code validation, unsupported ADB, successful pairing/connection, wrong or expired code, cancellation and timeout, command-output/exit-status disagreement, unverified endpoints, and proof that pairing codes are neither arguments nor persisted. No fixture may invoke a connected device.
+
+**Review/acceptance:** Reviewer checks that pairing never kills the shared ADB server or disconnects unrelated devices, and that transport identity is verified before the connection is exposed to backup/copy/restore.
+
+### Step 8.18 — Add wireless setup UI and macOS network privacy
+
+**Deliverable:** Add an Android 11+ pairing-code flow with separate Pair and Connect actions, explicit retry/cancel behavior, and actionable Android/ADB/network errors. Explain same-network and Developer options prerequisites, persistent pairing/revocation on Android, and macOS Local Network permission. Add the required privacy description and verify whether the bundled/helper ADB mDNS behavior requires Bonjour declarations. Do not implement app-level LAN scans or Bonjour browsing; explain that ADB itself may auto-discover and reconnect paired devices. Correct USB-only labels throughout the connection UI.
+
+**Commit:** `feat(adb): add explicit wireless pairing and connection`.
+
+**Automated acceptance:** Fake model/UI fixtures cover busy-state guards, cancellation/dismissal, stale completion, ADB replacement, verified endpoint selection among multiple devices, and connection refresh without folder reads.
+
+**Review/acceptance:** Reviewer checks local-network privacy metadata/copy and operation lifecycle. Manual acceptance covers fresh/denied Local Network permission, pairing, reconnect, USB/Wi-Fi coexistence, route loss and retry, and identity continuity using only a user-selected disposable folder for file operations. No phone content is read during pairing or identity checks.
+
 ### Step 9 — Packaging and end-to-end acceptance
 
 **Deliverable:** Add reproducible local `.app` build steps using the installed ADB, ADB location recovery, macOS CI for engine/app targets, and a short user guide. Keep initial release local/ad-hoc signed; defer notarization, universal binaries, App Store, and ADB redistribution pending licensing review.
@@ -301,7 +336,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 
 - Android’s `Android/media` is shared storage. Android 11+ restricts `Android/data` and `Android/obb` through standard Android file APIs; ADB-shell availability varies by device. Probe actual access and explain denials rather than promising it.
 - A restore point is a validated scan-based snapshot, not an atomic image of a changing phone filesystem.
-- No automatic scheduling, wireless pairing, cloud storage, encryption, protected app-private data, apps/settings backup, or OS restore in v1.
+- No automatic scheduling, cloud storage, encryption, protected app-private data, apps/settings backup, or OS restore in v1. Wireless pairing and connection are scoped to Steps 8.16–8.18.
 - Build the initial app for this Apple Silicon Mac and keep platform-specific assumptions isolated so later support for other Macs is straightforward.
 
 ## Decision record

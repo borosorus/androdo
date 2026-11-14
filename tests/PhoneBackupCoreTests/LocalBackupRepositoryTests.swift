@@ -12,7 +12,7 @@ final class LocalBackupRepositoryTests: XCTestCase {
         let repository = try await store.openOrCreateRepository(in: root, for: device)
         let openedRepositories = try await store.repositories()
         XCTAssertEqual(openedRepositories, [repository])
-        XCTAssertFalse(repository.location.path.contains(device.id.serial))
+        XCTAssertFalse(repository.location.path.contains(device.id.value))
 
         let unicodeFolder = try RemotePath("/sdcard/Images\nfrom phone")
         let firstFile = try unicodeFolder.appending("é.jpg")
@@ -178,6 +178,34 @@ final class LocalBackupRepositoryTests: XCTestCase {
         XCTAssertEqual(reopenedFirst, first)
     }
 
+    func testNewRepositoryPersistsOpaqueIdentityWithoutAndroidProperties() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let evidence = try DeviceIdentityEvidence(serialNumber: "private-serial",
+                                                  manufacturer: "private-manufacturer",
+                                                  model: "private-model")
+        let device = AndroidDevice(id: evidence.deviceID, state: .device,
+                                   model: evidence.model, product: "private-product")
+        let store = LocalBackupRepositoryStore()
+        let repository = try await store.openOrCreateRepository(in: root, for: device)
+        let metadata = repository.location.appendingPathComponent("metadata.sqlite")
+
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open_v2(metadata.path, &database, SQLITE_OPEN_READONLY, nil), SQLITE_OK)
+        defer { if let database { sqlite3_close(database) } }
+        var statement: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(database, "SELECT device_serial, model, product, display_name FROM repository", -1,
+                                          &statement, nil), SQLITE_OK)
+        defer { if let statement { sqlite3_finalize(statement) } }
+        XCTAssertEqual(sqlite3_step(statement), SQLITE_ROW)
+        XCTAssertEqual(String(cString: try XCTUnwrap(sqlite3_column_text(statement, 0))), evidence.deviceID.value)
+        XCTAssertEqual(sqlite3_column_type(statement, 1), SQLITE_NULL)
+        XCTAssertEqual(sqlite3_column_type(statement, 2), SQLITE_NULL)
+        XCTAssertEqual(String(cString: try XCTUnwrap(sqlite3_column_text(statement, 3))), "Android device")
+        XCTAssertFalse(repository.location.path.contains("private-serial"))
+        XCTAssertFalse(repository.location.path.contains("private-model"))
+    }
+
     func testSQLiteFailureRollsBackPointAndEntryRowsTogether() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -285,7 +313,7 @@ final class LocalBackupRepositoryTests: XCTestCase {
     }
 
     private func testDevice(_ serial: String) throws -> AndroidDevice {
-        AndroidDevice(id: try DeviceID(serial: serial), state: .device, model: "Pixel", product: "pixel")
+        fixtureDevice(id: try DeviceID(value: serial), state: .device, model: "Pixel", product: "pixel")
     }
 
     private func temporaryDirectory() throws -> URL {

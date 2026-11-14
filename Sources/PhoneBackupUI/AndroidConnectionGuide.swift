@@ -5,6 +5,7 @@ import SwiftUI
 struct AndroidConnectionGuide: View {
     let hasADB: Bool
     let deviceState: DeviceState?
+    let discoveryIssue: DeviceDiscoveryIssueKind?
 
     private let developerOptionsURL = URL(string: "https://developer.android.com/studio/debug/dev-options#enable")!
     private let usbDebuggingURL = URL(string: "https://developer.android.com/studio/debug/dev-options#debugging")!
@@ -69,8 +70,17 @@ struct AndroidConnectionGuide: View {
 
     private var connectionStatus: String {
         guard hasADB else { return "Set up ADB on this Mac first; then Androdo can check for your phone." }
+        if discoveryIssue == .identityUnavailable {
+            return "ADB sees a connected phone, but Androdo couldn’t verify its identity. Refresh the device list or check the phone’s ADB connection. File operations stay disabled until identity can be verified."
+        }
+        if discoveryIssue == .unsupportedConnection {
+            return "ADB listed a phone without a usable connection ID. Update Android Platform Tools, then choose Check Again."
+        }
+        if discoveryIssue == .transferProtocolUnavailable {
+            return "This connection does not support Androdo’s guarded file-transfer protocol. Update Android Platform Tools, then choose Check Again."
+        }
         guard let deviceState else { return "No phone is listed yet. Connect it by USB, unlock it, then choose Check Again." }
-        switch deviceState {
+        return switch deviceState {
         case .device: "This phone is connected and authorized."
         case .unauthorized: "Android sees this phone, but it has not authorized this Mac yet. Unlock the phone and approve its prompt."
         case .offline: "Android lists this phone as offline. Reconnect the cable and unlock the phone."
@@ -81,8 +91,9 @@ struct AndroidConnectionGuide: View {
 
     private var statusSymbol: String {
         guard hasADB else { return "info.circle" }
+        if discoveryIssue != nil { return "exclamationmark.triangle" }
         guard let deviceState else { return "cable.connector" }
-        switch deviceState {
+        return switch deviceState {
         case .device: "checkmark.circle.fill"
         case .unauthorized: "lock.open"
         case .offline, .bootloader, .recovery, .sideload, .unknown: "exclamationmark.triangle"
@@ -90,6 +101,7 @@ struct AndroidConnectionGuide: View {
     }
 
     private var statusColor: Color {
+        if discoveryIssue != nil { return AppIdentity.copper }
         if deviceState == .device { return AppIdentity.teal }
         if deviceState == .unauthorized { return AppIdentity.copper }
         return .secondary

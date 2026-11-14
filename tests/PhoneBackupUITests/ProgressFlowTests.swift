@@ -149,7 +149,7 @@ final class ProgressFlowTests: XCTestCase {
 private final class ProgressFixture {
     let root: URL
     let path = try! RemotePath("/sdcard/Trial/example.jpg")
-    let device = AndroidDevice(id: try! DeviceID(serial: "progress-fixture"), state: .device)
+    let device = fixtureDevice(id: try! DeviceID(value: "progress-fixture"), state: .device)
     let repository: BackupRepositoryInfo
     let engine = ProgressCopyEngine()
     let remote: FakeDeviceTransport

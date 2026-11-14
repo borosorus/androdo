@@ -23,6 +23,7 @@ public final class AppModel {
     public let fileBrowser: RemoteBrowserModel
     public let activityStore: ActivityStore
     public private(set) var devices: [AndroidDevice] = []
+    public private(set) var deviceDiscoveryIssues: [DeviceDiscoveryIssue] = []
     public private(set) var selectedDevice: AndroidDevice?
     public private(set) var backupLocation: URL?
     public private(set) var repositories: [BackupRepositoryInfo] = []
@@ -94,6 +95,15 @@ public final class AppModel {
         requiresRepositoryRecoveryConfirmation || (backupLocation != nil && loadedRepositoryLocation != backupLocation)
     }
     public var hasADB: Bool { services.deviceTransport != nil }
+    public var connectionGuideDeviceState: DeviceState? {
+        selectedDevice?.state ?? deviceDiscoveryIssues.first(where: { $0.state != .device })?.state
+    }
+    public var connectionGuideDiscoveryIssue: DeviceDiscoveryIssueKind? {
+        guard selectedDevice == nil else { return nil }
+        return deviceDiscoveryIssues.first(where: {
+            $0.kind == .identityUnavailable || $0.kind == .unsupportedConnection || $0.kind == .transferProtocolUnavailable
+        })?.kind
+    }
     public var adbExecutableURL: URL? { services.adbExecutable }
     public var isUsingManagedADB: Bool {
         guard let adbExecutableURL else { return false }
@@ -136,37 +146,70 @@ public final class AppModel {
         defer { isRefreshingDevices = false }
         guard let transport = services.deviceTransport else {
             devices = []
-            selectedDevice = nil
-            fileBrowser.setDevice(nil)
+            deviceDiscoveryIssues = []
+            clearDeviceSelection()
             await refreshDeviceBackupSummary()
             if services.adbExecutable == nil { statusMessage = "Android Debug Bridge was not found." }
             return
         }
         do {
-            let found = try await transport.connectedDevices()
+            let discovery = try await transport.connectedDevices()
+            let found = discovery.devices
             devices = found
-            if let current = selectedDevice, let refreshed = found.first(where: { $0.id == current.id }) {
+            deviceDiscoveryIssues = discovery.issues
+            let previousID = selectedDevice?.id
+            let previousGeneration = selectedDevice?.preferredSession?.connection.generation
+            if let previousID, let refreshed = found.first(where: { $0.id == previousID }) {
                 selectedDevice = refreshed
                 fileBrowser.setDevice(refreshed)
+                if previousGeneration != refreshed.preferredSession?.connection.generation {
+                    invalidatePlansForConnectionChange()
+                }
+            } else if previousID != nil {
+                clearDeviceSelection()
+            } else if let initialDevice = found.first(where: { $0.state == .device }) ?? found.first {
+                applySelectedDevice(initialDevice, scheduleSummaryRefresh: false)
             } else {
-                selectedDevice = found.first(where: { $0.state == .device }) ?? found.first
-                if let selectedDevice { loadSavedSelection(for: selectedDevice.id) }
-                fileBrowser.setDevice(selectedDevice)
+                selectedDevice = nil
+                fileBrowser.setDevice(nil)
             }
-            statusMessage = found.isEmpty ? "No Android device is connected." : nil
+            statusMessage = if found.isEmpty, !discovery.issues.isEmpty {
+                "A connected Android device could not be safely identified. Check its ADB connection, then refresh."
+            } else if !discovery.issues.isEmpty {
+                "Some connected Android devices could not be identified and won’t be available for file operations."
+            } else if found.isEmpty {
+                "No Android device is connected."
+            } else {
+                nil
+            }
             errorMessage = nil
             await refreshDeviceBackupSummary()
         } catch {
             devices = []
-            selectedDevice = nil
-            fileBrowser.setDevice(nil)
+            deviceDiscoveryIssues = []
+            clearDeviceSelection()
             await refreshDeviceBackupSummary()
             errorMessage = UserFacingError.message(for: error)
         }
     }
 
+    private func invalidatePlansForConnectionChange() {
+        contextGeneration += 1
+        backupPlan = nil
+        copyPlan = nil
+        restorePlan = nil
+        isShowingBackupReview = false
+        isShowingCopyReview = false
+        isShowingExportReview = false
+        fileBrowser.setDevice(selectedDevice)
+    }
+
     public func selectDevice(_ device: AndroidDevice) {
         guard !isBusy else { return }
+        applySelectedDevice(device)
+    }
+
+    private func applySelectedDevice(_ device: AndroidDevice, scheduleSummaryRefresh: Bool = true) {
         contextGeneration += 1
         selectedDevice = device
         invalidateDeviceBackupSummary()
@@ -202,7 +245,31 @@ public final class AppModel {
             restorePointError = nil
             restoreEntries = []
         }
-        Task { await refreshDeviceBackupSummary() }
+        if scheduleSummaryRefresh { Task { await refreshDeviceBackupSummary() } }
+    }
+
+    private func clearDeviceSelection() {
+        contextGeneration += 1
+        selectedDevice = nil
+        fileBrowser.setDevice(nil)
+        invalidateDeviceBackupSummary()
+        backupPlan = nil
+        copyPlan = nil
+        restorePlan = nil
+        isShowingBackupReview = false
+        isShowingCopyReview = false
+        isShowingExportReview = false
+        recoveryAttempt = nil
+        recoveryWarnings = []
+        pendingAttempts = []
+        selectedRepositoryID = nil
+        restorePoints = []
+        selectedRestorePoint = nil
+        selectedRestoreRoots = []
+        restoreEntries = []
+        restorePointRequest = UUID()
+        isLoadingRestorePoint = false
+        restorePointError = nil
     }
 
     public func setBackupSelection(_ selection: BackupSelection) {
@@ -223,6 +290,7 @@ public final class AppModel {
 
     public func listRemoteChildren(of path: RemotePath) async -> [RemoteEntry] {
         guard let device = selectedDevice, device.state == .device,
+              let session = device.preferredSession,
               let remote = services.remoteAccess else {
             errorMessage = services.remoteAccess == nil ? "ADB is unavailable. Locate adb to browse this device." :
                 "Connect and authorize an Android device before browsing folders."
@@ -231,7 +299,7 @@ public final class AppModel {
         isLoadingFolder = true
         defer { isLoadingFolder = false }
         do {
-            let entries = try await remote.children(of: path, on: device.id)
+            let entries = try await remote.children(of: path, on: session)
             errorMessage = nil
             return entries
         } catch {
@@ -393,6 +461,10 @@ public final class AppModel {
             errorMessage = "Connect and authorize an Android device before planning a backup."
             return
         }
+        guard let session = device.preferredSession else {
+            errorMessage = "The Android connection could not be verified. Refresh the device list and try again."
+            return
+        }
         guard let engine = services.backupEngine else {
             errorMessage = "ADB is unavailable. Locate adb before planning a backup."
             return
@@ -418,7 +490,7 @@ public final class AppModel {
         let task = Task {
             let repository = try await self.repository(for: device, createIfMissing: true, at: backupLocation)
             try Task.checkCancellation()
-            return try await engine.plan(repository: repository.id, device: device.id, selection: selection)
+            return try await engine.plan(repository: repository.id, session: session, selection: selection)
         }
         planningTask = task
         defer { planningTask = nil; isPlanningBackup = false }
@@ -480,11 +552,16 @@ public final class AppModel {
 
     public func retryBackup(_ attempt: BackupAttempt?) async {
         guard !isBusy, let attempt, let engine = services.backupEngine else { return }
+        guard let device = selectedDevice, device.id == attempt.device,
+              let session = device.preferredSession else {
+            errorMessage = "Connect the phone that owns this backup before continuing."
+            return
+        }
         let progressID = beginProgress(.backup, stage: .starting)
         isStartingOperation = true
         defer { isStartingOperation = false }
         do {
-            let operation = try await engine.resumeBackup(attempt.id, omissions: .requireComplete)
+            let operation = try await engine.resumeBackup(attempt.id, using: session, omissions: .requireComplete)
             recoveryAttempt = nil
             recoveryWarnings = []
             pendingAttempts.removeAll { $0.id == attempt.id }
@@ -500,11 +577,16 @@ public final class AppModel {
 
     public func finishBackupWithOmissions(_ attempt: BackupAttempt?) async {
         guard !isBusy, let attempt, let engine = services.backupEngine else { return }
+        guard let device = selectedDevice, device.id == attempt.device,
+              let session = device.preferredSession else {
+            errorMessage = "Connect the phone that owns this backup before continuing."
+            return
+        }
         let progressID = beginProgress(.backup, stage: .starting)
         isStartingOperation = true
         defer { isStartingOperation = false }
         do {
-            let operation = try await engine.finishWithOmissions(attempt.id)
+            let operation = try await engine.finishWithOmissions(attempt.id, using: session, omissions: .finishWithOmissions)
             recoveryAttempt = nil
             pendingAttempts.removeAll { $0.id == attempt.id }
             monitorBackup(operation, engine: engine, repository: attempt.repository)
@@ -531,23 +613,25 @@ public final class AppModel {
 
     public func planPhoneToMacCopy(roots: [RemotePath], destination: URL) async {
         guard !isBusy, let device = selectedDevice, device.state == .device,
+              let session = device.preferredSession,
               let engine = services.copyEngine else {
             errorMessage = "Connect and authorize an Android device before copying files."
             return
         }
         beginCopyAccess([destination])
-        await planCopy(.phoneToMac(device: device.id, roots: roots, destination: destination), using: engine)
+        await planCopy(.phoneToMac(session: session, roots: roots, destination: destination), using: engine)
     }
 
     public func planMacToPhoneCopy(sources: [URL], destination: RemotePath,
                                    replacingMissingTargets: Set<RemotePath> = []) async {
         guard !isBusy, let device = selectedDevice, device.state == .device,
+              let session = device.preferredSession,
               let engine = services.copyEngine else {
             errorMessage = "Connect and authorize an Android device before copying files."
             return
         }
         beginCopyAccess(sources)
-        await planCopy(.macToPhone(device: device.id, sources: sources, destination: destination,
+        await planCopy(.macToPhone(session: session, sources: sources, destination: destination,
                                    replaceMissingTargets: replacingMissingTargets), using: engine)
     }
 
@@ -625,8 +709,8 @@ public final class AppModel {
 
     private func replanCopyWithExplicitMissingTarget(_ request: CopyRequest, path: RemotePath,
                                                        engine: any CopyEngine) async -> Bool {
-        guard case .macToPhone(let device, let sources, let destination, _) = request else { return false }
-        await planCopy(.macToPhone(device: device, sources: sources, destination: destination,
+        guard case .macToPhone(let session, let sources, let destination, _) = request else { return false }
+        await planCopy(.macToPhone(session: session, sources: sources, destination: destination,
                                    replaceMissingTargets: [path]), using: engine)
         guard isShowingCopyReview else { return false }
         copyResult = nil
@@ -646,8 +730,9 @@ public final class AppModel {
             throw EngineError.deviceUnavailable(deviceID)
         }
         guard device.state == .device else { throw EngineError.deviceUnavailable(device.id) }
+        guard let session = device.preferredSession else { throw EngineError.deviceUnavailable(device.id) }
         guard let engine = services.copyEngine else { throw EngineError.adbUnavailable("Copy engine unavailable") }
-        let plan = try await prepareCopy(.phoneToMac(device: device.id, roots: [entry.path],
+        let plan = try await prepareCopy(.phoneToMac(session: session, roots: [entry.path],
                                                      destination: destination.deletingLastPathComponent()),
                                          using: engine, requiresReview: false)
         guard plan.conflicts.isEmpty,
@@ -757,6 +842,10 @@ public final class AppModel {
             errorMessage = "Connect and authorize the Android device that owns this backup before restoring to it."
             return
         }
+        guard let session = devices.first(where: { $0.id == repositoryInfo.deviceID })?.preferredSession else {
+            errorMessage = "The Android connection could not be verified. Refresh the device list and try again."
+            return
+        }
         let selectedEntries = selectedRestoreRoots.compactMap { root in restoreEntries.first { $0.path == root } }
         guard selectedEntries.count == selectedRestoreRoots.count,
               let sourceBase = ExportMapping.commonSourceBase(for: selectedEntries) else {
@@ -765,7 +854,8 @@ public final class AppModel {
         }
         let target: RestoreTarget = folder.map { .phoneFolder($0, sourceBase: sourceBase) } ?? .originalPhonePaths
         let request = RestoreRequest(repository: repositoryInfo.id, point: point.id,
-                                     selectedRoots: Array(selectedRestoreRoots), target: target, phoneConflictPolicy: policy)
+                                     selectedRoots: Array(selectedRestoreRoots), target: target,
+                                     phoneConflictPolicy: policy, session: session)
         let title = folder.map { "Review phone restore to \($0.description)" } ?? "Review phone restore"
         await planRestore(request, title: title)
     }

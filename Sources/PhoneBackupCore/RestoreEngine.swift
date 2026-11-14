@@ -153,7 +153,10 @@ public actor DefaultRestoreEngine: RestoreEngine {
             }
         } else {
             guard let remote else { throw EngineError.transport("Android restore is unavailable without a connected-device transport") }
-            let states = try await phoneSnapshot(mappings, device: info.deviceID, remote: remote, progress: progress)
+            guard let session = request.session, session.deviceID == info.deviceID else {
+                throw EngineError.deviceUnavailable(info.deviceID)
+            }
+            let states = try await phoneSnapshot(mappings, session: session, remote: remote, progress: progress)
             for mapping in mappings {
                 guard case .phone(let destination) = mapping.destination else { continue }
                 guard let state = states[destination] else { throw EngineError.transport("Missing destination metadata") }
@@ -263,10 +266,15 @@ public actor DefaultRestoreEngine: RestoreEngine {
         }
 
         do {
+            if case .localFolder = record.request.target {
+                // Local restore does not need a live Android connection.
+            } else if record.request.session?.deviceID != info.deviceID {
+                throw EngineError.deviceUnavailable(info.deviceID)
+            }
             for mapping in record.mappings {
                 try Task.checkCancellation()
                 if mapping.source.kind == .directory {
-                    try await ensureDirectory(for: mapping, record: record, device: info.deviceID)
+                    try await ensureDirectory(for: mapping, record: record, session: record.request.session)
                     itemResults.append(RestoreItemResult(source: mapping.source.path, destination: mapping.destination,
                                                          state: .publishedAndVerified))
                     emitProgress(operation, items: itemResults.count, totalItems: totalItems,
@@ -292,10 +300,11 @@ public actor DefaultRestoreEngine: RestoreEngine {
                                                                replacing: conflict.flatMap { replacementIDs.contains($0.id) ? $0.observedIdentity : nil })
                     case .phone(let destination):
                         guard let remote = remote else { throw EngineError.transport("Android restore transport is unavailable") }
-                        try await ensurePhoneDirectories(for: destination.parent ?? .root, device: info.deviceID, remote: remote)
+                        guard let session = record.request.session else { throw EngineError.deviceUnavailable(info.deviceID) }
+                        try await ensurePhoneDirectories(for: destination.parent ?? .root, session: session, remote: remote)
                         let conflict = expectedByPath[mapping.destination]
                         let identity = conflict.flatMap { replacementIDs.contains($0.id) ? $0.observedIdentity : nil }
-                        try await remote.publishStagedFile(from: staged, to: destination, on: info.deviceID,
+                        try await remote.publishStagedFile(from: staged, to: destination, on: session,
                                                            expected: reference, replacing: identity)
                     }
                 } catch {
@@ -354,7 +363,7 @@ public actor DefaultRestoreEngine: RestoreEngine {
         }
     }
 
-    private func ensureDirectory(for mapping: RestoreMapping, record: RequestRecord, device: DeviceID) async throws {
+    private func ensureDirectory(for mapping: RestoreMapping, record: RequestRecord, session: DeviceSession?) async throws {
         switch mapping.destination {
         case .local(let destination):
             guard let root = record.resolvedLocalRoot, let rootIdentity = record.localRootIdentity else {
@@ -364,7 +373,8 @@ public actor DefaultRestoreEngine: RestoreEngine {
                                                      expectedRootIdentity: rootIdentity)
         case .phone(let destination):
             guard let remote else { throw EngineError.transport("Android restore transport is unavailable") }
-            try await ensurePhoneDirectories(for: destination, device: device, remote: remote)
+            guard let session else { throw EngineError.transport("Phone restore requires a verified ADB connection") }
+            try await ensurePhoneDirectories(for: destination, session: session, remote: remote)
         }
     }
 
@@ -375,7 +385,10 @@ public actor DefaultRestoreEngine: RestoreEngine {
         if case .localFolder = record.request.target { states = [:] }
         else {
             guard let remote else { throw EngineError.transport("Android restore transport is unavailable") }
-            states = try await phoneSnapshot(record.mappings, device: info.deviceID, remote: remote, progress: { _ in })
+            guard let session = record.request.session, session.deviceID == info.deviceID else {
+                throw EngineError.deviceUnavailable(info.deviceID)
+            }
+            states = try await phoneSnapshot(record.mappings, session: session, remote: remote, progress: { _ in })
         }
         for mapping in record.mappings {
             try Task.checkCancellation()
@@ -402,7 +415,7 @@ public actor DefaultRestoreEngine: RestoreEngine {
     }
 
     /// A fresh, depth-ordered snapshot per preflight. Never descends through unsafe ancestors.
-    private func phoneSnapshot(_ mappings: [RestoreMapping], device: DeviceID,
+    private func phoneSnapshot(_ mappings: [RestoreMapping], session: DeviceSession,
                                remote: any RemoteDestinationAccess,
                                progress: @Sendable (RestorePlanningProgress) async -> Void) async throws -> [RemotePath: RemoteDestinationState] {
         var paths: Set<RemotePath> = []
@@ -432,7 +445,7 @@ public actor DefaultRestoreEngine: RestoreEngine {
                 }
                 inspect.append(path)
             }
-            let observed = try await remote.inspectDestinations(inspect, on: device)
+            let observed = try await remote.inspectDestinations(inspect, on: session)
             guard Set(observed.keys) == Set(inspect) else { throw EngineError.transport("Incomplete destination metadata") }
             states.merge(observed, uniquingKeysWith: { _, new in new })
             await progress(RestorePlanningProgress(stage: .checkingDestinations, completedItems: states.count, totalItems: paths.count))
@@ -440,15 +453,15 @@ public actor DefaultRestoreEngine: RestoreEngine {
         return states
     }
 
-    private func ensurePhoneDirectories(for destination: RemotePath, device: DeviceID,
+    private func ensurePhoneDirectories(for destination: RemotePath, session: DeviceSession,
                                         remote: any RemoteDestinationAccess) async throws {
         var current = RemotePath.root
         for (index, component) in destination.components.enumerated() {
             current = try current.appending(component)
             if index == 0 && component == "sdcard" { continue }
-            switch try await remote.inspectDestination(current, on: device) {
+            switch try await remote.inspectDestination(current, on: session) {
             case .directory: continue
-            case .missing: try await remote.createDestinationDirectory(current, on: device)
+            case .missing: try await remote.createDestinationDirectory(current, on: session)
             case .regularFile, .symbolicLink, .other:
                 throw EngineError.destinationConflict(TransferConflict(destination: current.description, kind: .unsafePath))
             }

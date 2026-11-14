@@ -178,7 +178,7 @@ final class DeviceBackupSummaryTests: XCTestCase {
     }
 
     func testReadinessChoosesTheNextPrerequisiteAndRespectsBusyState() throws {
-        let device = AndroidDevice(id: try DeviceID(serial: "readiness"), state: .device)
+        let device = fixtureDevice(id: try DeviceID(value: "readiness"), state: .device)
         let scope = BackupSelection(scope: .allSharedStorage)
         func state(adb: Bool = true, phone: AndroidDevice? = device, location: Bool = true,
                    recovery: Bool = false, selection: BackupSelection = scope, busy: Bool = false) -> BackupReadiness {
@@ -212,8 +212,8 @@ private struct SummaryFixture {
     init() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        device = AndroidDevice(id: try DeviceID(serial: "summary-device"), state: .device, model: "Fixture phone")
-        otherDevice = AndroidDevice(id: try DeviceID(serial: "other-device"), state: .device, model: "Other phone")
+        device = fixtureDevice(id: try DeviceID(value: "summary-device"), state: .device, model: "Fixture phone")
+        otherDevice = fixtureDevice(id: try DeviceID(value: "other-device"), state: .device, model: "Other phone")
         repository = BackupRepositoryInfo(location: root.appendingPathComponent("PhoneBackup/device-a"), deviceID: device.id, displayName: "A")
         otherRepository = BackupRepositoryInfo(location: root.appendingPathComponent("PhoneBackup/device-b"), deviceID: otherDevice.id, displayName: "B")
         transport = FakeDeviceTransport(devices: [device, otherDevice])

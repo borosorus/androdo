@@ -56,8 +56,22 @@ public final class RemoteBrowserModel {
     }
 
     public func setDevice(_ device: AndroidDevice?) {
-        guard self.device?.id != device?.id || self.device?.state != device?.state else { return }
+        let sameIdentity = self.device?.id == device?.id && self.device?.state == device?.state
+        let sameSession = self.device?.preferredSession?.connection.generation == device?.preferredSession?.connection.generation
+        guard !sameIdentity || !sameSession else {
+            self.device = device
+            return
+        }
         self.device = device
+        if sameIdentity {
+            cancelRequest()
+            invalidateVisitedFolders()
+            pendingDirectory = nil
+            isLoading = false
+            errorMessage = nil
+            suspendedEntries = nil
+            return
+        }
         reset()
     }
 
@@ -125,7 +139,7 @@ public final class RemoteBrowserModel {
     }
 
     private func load(_ path: RemotePath, force: Bool, historyTarget: Int?) async {
-        guard let device, device.state == .device, let remote else {
+        guard let device, device.state == .device, let session = device.preferredSession, let remote else {
             cancelNavigation()
             entries = []
             errorMessage = "Connect and authorize an Android device to browse files."
@@ -158,18 +172,20 @@ public final class RemoteBrowserModel {
         isLoading = true
         isShowingCachedContents = false
         let task = Task {
-            let values = try await remote.children(of: path, on: device.id)
+            let values = try await remote.children(of: path, on: session)
             try Task.checkCancellation()
             return values
         }
         listingTask = task
         do {
             let listed = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
-            guard generation == request, self.device?.id == device.id else { return }
+            guard generation == request, self.device?.id == device.id,
+                  self.device?.preferredSession?.connection.generation == session.connection.generation else { return }
             let column = sortColumn
             let ascending = sortAscending
             let sorted = await Task.detached(priority: .userInitiated) { Self.sorted(listed, column: column, ascending: ascending) }.value
-            guard generation == request, self.device?.id == device.id else { return }
+            guard generation == request, self.device?.id == device.id,
+                  self.device?.preferredSession?.connection.generation == session.connection.generation else { return }
             commitLocation(path, historyTarget: historyTarget)
             entries = column == sortColumn && ascending == sortAscending ? sorted : Self.sorted(listed, column: sortColumn, ascending: sortAscending)
             selection = previousSelection.intersection(Set(entries.map(\.path)))
@@ -178,7 +194,8 @@ public final class RemoteBrowserModel {
             guard generation == request else { return }
             entries = Self.sorted(suspendedEntries ?? cache[currentDirectory] ?? [], column: sortColumn, ascending: sortAscending)
         } catch {
-            guard generation == request, self.device?.id == device.id else { return }
+            guard generation == request, self.device?.id == device.id,
+                  self.device?.preferredSession?.connection.generation == session.connection.generation else { return }
             commitLocation(path, historyTarget: historyTarget, markOpened: false)
             errorMessage = UserFacingError.message(for: error)
             cache.removeValue(forKey: path)

@@ -20,7 +20,7 @@ struct BackupReviewSheet: View {
                         row("Data to transfer", UIFormatting.bytes(plan.bytesToTransfer))
                         row("Data in restore point", UIFormatting.bytes(plan.totalBytes))
                         row("Items removed from this snapshot", "\(plan.deletedCount)")
-                        row("Device", model.selectedDevice?.model ?? plan.device.serial)
+                        row("Device", model.selectedDevice?.model ?? "Android device")
                         row("Backup folder", model.backupLocation?.lastPathComponent ?? "Unavailable")
                     }
                     .padding(14)

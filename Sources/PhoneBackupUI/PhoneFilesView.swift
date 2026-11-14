@@ -148,7 +148,7 @@ struct PhoneFilesView: View {
     private var connectionUnavailableDescription: String {
         guard model.hasADB else { return "Set up ADB on this Mac, then prepare and authorize your phone to browse shared files." }
         guard let state = browser.device?.state else { return "Connect your phone with a data-capable USB cable, unlock it, and choose Check Again in Connection Setup." }
-        switch state {
+        return switch state {
         case .device: "This phone is ready. Open shared storage to browse files."
         case .unauthorized: "Unlock your phone and approve the “Allow USB debugging?” prompt for this Mac."
         case .offline: "Android lists this phone as offline. Reconnect the cable and unlock the phone."

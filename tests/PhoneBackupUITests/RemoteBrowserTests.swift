@@ -5,8 +5,8 @@ import XCTest
 @MainActor
 final class RemoteBrowserTests: XCTestCase {
     func testSharedStorageOpensWhenDeviceBecomesReadyAfterInitialVisit() async throws {
-        let id = try DeviceID(serial: "browser-reconnect-test")
-        let device = AndroidDevice(id: id, state: .device)
+        let id = try DeviceID(value: "browser-reconnect-test")
+        let device = fixtureDevice(id: id, state: .device)
         let transport = FakeDeviceTransport(devices: [device])
         let root = try RemotePath("/sdcard")
         await transport.seed(RemoteEntry(path: root, kind: .directory), on: id)
@@ -27,8 +27,8 @@ final class RemoteBrowserTests: XCTestCase {
     }
 
     func testOpeningBrowserListsOnlyTheRequestedDirectory() async throws {
-        let id = try DeviceID(serial: "browser-test")
-        let device = AndroidDevice(id: id, state: .device)
+        let id = try DeviceID(value: "browser-test")
+        let device = fixtureDevice(id: id, state: .device)
         let transport = FakeDeviceTransport(devices: [device])
         let root = try RemotePath("/sdcard")
         let folder = try root.appending("Pictures")
@@ -52,8 +52,8 @@ final class RemoteBrowserTests: XCTestCase {
     }
 
     func testEmptyAndDeniedFoldersHaveDifferentStates() async throws {
-        let id = try DeviceID(serial: "browser-error-test")
-        let device = AndroidDevice(id: id, state: .device)
+        let id = try DeviceID(value: "browser-error-test")
+        let device = fixtureDevice(id: id, state: .device)
         let transport = FakeDeviceTransport(devices: [device])
         let root = try RemotePath("/sdcard")
         await transport.seed(RemoteEntry(path: root, kind: .directory), on: id)
@@ -71,8 +71,8 @@ final class RemoteBrowserTests: XCTestCase {
     }
 
     func testSortAndSelectionDoNotRequestMoreDirectoryListings() async throws {
-        let id = try DeviceID(serial: "browser-sort-test")
-        let device = AndroidDevice(id: id, state: .device)
+        let id = try DeviceID(value: "browser-sort-test")
+        let device = fixtureDevice(id: id, state: .device)
         let transport = FakeDeviceTransport(devices: [device])
         let root = try RemotePath("/sdcard")
         await transport.seed(RemoteEntry(path: try root.appending("z.txt"), kind: .file, size: 4), on: id)

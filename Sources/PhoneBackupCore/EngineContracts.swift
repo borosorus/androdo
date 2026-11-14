@@ -1,14 +1,14 @@
 import Foundation
 
 public protocol DeviceTransport: Sendable {
-    func connectedDevices() async throws -> [AndroidDevice]
+    func connectedDevices() async throws -> DeviceDiscoveryResult
 }
 
 public protocol RemoteFileAccess: Sendable {
-    func children(of path: RemotePath, on device: DeviceID) async throws -> [RemoteEntry]
-    func metadata(of path: RemotePath, on device: DeviceID) async throws -> RemoteEntry
-    func pull(from path: RemotePath, on device: DeviceID, to localURL: URL) async throws
-    func push(from localURL: URL, to path: RemotePath, on device: DeviceID) async throws
+    func children(of path: RemotePath, on session: DeviceSession) async throws -> [RemoteEntry]
+    func metadata(of path: RemotePath, on session: DeviceSession) async throws -> RemoteEntry
+    func pull(from path: RemotePath, on session: DeviceSession, to localURL: URL) async throws
+    func push(from localURL: URL, to path: RemotePath, on session: DeviceSession) async throws
 }
 
 public protocol BackupRepositoryStore: Sendable {
@@ -39,19 +39,19 @@ public protocol BackupRepositoryWriting: BackupRepositoryStore {
 }
 
 public protocol RemoteDestinationAccess: RemoteFileAccess {
-    func inspectDestination(_ path: RemotePath, on device: DeviceID) async throws -> RemoteDestinationState
-    func inspectDestinations(_ paths: [RemotePath], on device: DeviceID) async throws -> [RemotePath: RemoteDestinationState]
-    func createDestinationDirectory(_ path: RemotePath, on device: DeviceID) async throws
-    func publishStagedFile(from localURL: URL, to path: RemotePath, on device: DeviceID,
+    func inspectDestination(_ path: RemotePath, on session: DeviceSession) async throws -> RemoteDestinationState
+    func inspectDestinations(_ paths: [RemotePath], on session: DeviceSession) async throws -> [RemotePath: RemoteDestinationState]
+    func createDestinationDirectory(_ path: RemotePath, on session: DeviceSession) async throws
+    func publishStagedFile(from localURL: URL, to path: RemotePath, on session: DeviceSession,
                            expected: ContentObjectReference, replacing identity: String?) async throws
 }
 
 extension RemoteDestinationAccess {
-    public func inspectDestinations(_ paths: [RemotePath], on device: DeviceID) async throws -> [RemotePath: RemoteDestinationState] {
+    public func inspectDestinations(_ paths: [RemotePath], on session: DeviceSession) async throws -> [RemotePath: RemoteDestinationState] {
         var states: [RemotePath: RemoteDestinationState] = [:]
         for path in paths {
             try Task.checkCancellation()
-            states[path] = try await inspectDestination(path, on: device)
+            states[path] = try await inspectDestination(path, on: session)
         }
         return states
     }
@@ -63,10 +63,12 @@ public protocol OperationCoordinator: Sendable {
 }
 
 public protocol BackupEngine: OperationCoordinator {
-    func plan(repository: RepositoryID, device: DeviceID, selection: BackupSelection) async throws -> BackupPlan
+    func plan(repository: RepositoryID, session: DeviceSession, selection: BackupSelection) async throws -> BackupPlan
     func startBackup(using plan: BackupPlanID, omissions: BackupOmissionChoice) async throws -> OperationID
-    func resumeBackup(_ attempt: BackupAttemptID, omissions: BackupOmissionChoice) async throws -> OperationID
-    func finishWithOmissions(_ attempt: BackupAttemptID) async throws -> OperationID
+    func resumeBackup(_ attempt: BackupAttemptID, using session: DeviceSession,
+                      omissions: BackupOmissionChoice) async throws -> OperationID
+    func finishWithOmissions(_ attempt: BackupAttemptID, using session: DeviceSession,
+                             omissions: BackupOmissionChoice) async throws -> OperationID
     func attempts(in repository: RepositoryID) async throws -> [BackupAttempt]
     func attemptID(for operation: OperationID) async -> BackupAttemptID?
 }

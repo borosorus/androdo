@@ -31,7 +31,7 @@ public final class AppPreferences {
     }
 
     public func selection(for device: DeviceID) -> BackupSelection {
-        guard let data = defaults.data(forKey: selectionPrefix + device.serial),
+        guard let data = defaults.data(forKey: selectionPrefix + device.value),
               let value = try? JSONDecoder().decode(BackupSelection.self, from: data) else {
             return BackupSelection()
         }
@@ -40,7 +40,7 @@ public final class AppPreferences {
 
     public func save(_ selection: BackupSelection, for device: DeviceID) {
         guard let data = try? JSONEncoder().encode(selection) else { return }
-        defaults.set(data, forKey: selectionPrefix + device.serial)
+        defaults.set(data, forKey: selectionPrefix + device.value)
     }
 }
 

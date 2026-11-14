@@ -361,6 +361,10 @@ private struct InstallerFixture {
             | (UInt32(data[offset + 2]) << 16) | (UInt32(data[offset + 3]) << 24)
     }
 
+    private func read16(_ data: Data, _ offset: Int) -> Int {
+        Int(data[offset]) | (Int(data[offset + 1]) << 8)
+    }
+
     func makeOversizedEntryCountArchive() throws -> URL {
         let source = root.appendingPathComponent("many-entries-\(UUID().uuidString)", isDirectory: true)
         let tools = source.appendingPathComponent("platform-tools", isDirectory: true)

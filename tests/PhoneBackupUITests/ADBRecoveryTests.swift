@@ -65,7 +65,7 @@ final class ADBRecoveryTests: XCTestCase {
         XCTAssertNotNil(fixture.model.errorMessage)
 
         try fixture.install()
-        let id = try DeviceID(serial: "setup-fixture")
+        let id = fixtureIdentity.deviceID
         let selection = BackupSelection(scope: .selected([try RemotePath("/sdcard/Pictures")]))
         fixture.preferences.save(selection, for: id)
         let repository = BackupRepositoryInfo(location: fixture.root.appendingPathComponent("PhoneBackup/device-fixture"),
@@ -79,10 +79,9 @@ final class ADBRecoveryTests: XCTestCase {
         XCTAssertEqual(fixture.model.selectedDevice?.id, id)
         XCTAssertEqual(fixture.preferences.adbExecutablePath, fixture.executable.path)
         XCTAssertEqual(fixture.model.backupSelection, selection)
-        XCTAssertEqual(try fixture.commands(), ["devices -l"])
-        await fixture.model.chooseBackupLocation(fixture.root)
-        XCTAssertEqual(fixture.model.repositories, [repository])
-        XCTAssertNotNil(fixture.preferences.locationBookmark)
+        try fixture.assertDiscoveryOnly(commands: fixture.commands())
+        let readableRepositories = try await fixture.store.openRepositories(in: fixture.root)
+        XCTAssertEqual(readableRepositories, [repository])
     }
 
     func testRecheckReplacesStaleSavedPathWithResolvedInstallation() async throws {
@@ -96,12 +95,12 @@ final class ADBRecoveryTests: XCTestCase {
         XCTAssertEqual(fixture.preferences.adbExecutablePath, fixture.executable.path)
         XCTAssertTrue(fixture.model.hasADB)
         XCTAssertNil(fixture.model.errorMessage)
-        XCTAssertEqual(try fixture.commands(), ["devices -l"])
+        try fixture.assertDiscoveryOnly(commands: fixture.commands())
     }
 
     func testRecheckKeepsTheOpenListingWhenRebindingTheSameDevice() async throws {
-        let id = try DeviceID(serial: "setup-fixture")
-        let transport = FakeDeviceTransport(devices: [AndroidDevice(id: id, state: .device)])
+        let id = fixtureIdentity.deviceID
+        let transport = FakeDeviceTransport(devices: [fixtureDevice(id: id, state: .device)])
         let folder = try RemotePath("/sdcard/Pictures")
         let file = try folder.appending("fixture.jpg")
         await transport.seed(RemoteEntry(path: file, kind: .file, size: 3), on: id, data: Data([1, 2, 3]))
@@ -119,7 +118,7 @@ final class ADBRecoveryTests: XCTestCase {
         XCTAssertEqual(fixture.model.fileBrowser.currentDirectory, folder)
         XCTAssertEqual(fixture.model.fileBrowser.entries.map(\.path), [file])
         XCTAssertEqual(fixture.model.fileBrowser.selection, [file])
-        XCTAssertEqual(try fixture.commands(), ["devices -l", "devices -l"])
+        try fixture.assertDiscoveryOnly(commands: fixture.commands(), refreshCount: 2)
         let listed = await transport.recordedChildrenCalls(on: id)
         XCTAssertEqual(listed, [folder])
     }
@@ -139,12 +138,16 @@ final class ADBRecoveryTests: XCTestCase {
 
 }
 
+private let fixtureIdentity = try! DeviceIdentityEvidence(
+    serialNumber: "setup-fixture", manufacturer: "Google", model: "Fixture"
+)
+
 private actor PausedDeviceTransport: DeviceTransport {
     private var started = false
     private var startWaiter: CheckedContinuation<Void, Never>?
-    private var response: CheckedContinuation<[AndroidDevice], any Error>?
+    private var response: CheckedContinuation<DeviceDiscoveryResult, any Error>?
 
-    func connectedDevices() async throws -> [AndroidDevice] {
+    func connectedDevices() async throws -> DeviceDiscoveryResult {
         started = true
         startWaiter?.resume()
         startWaiter = nil
@@ -156,7 +159,7 @@ private actor PausedDeviceTransport: DeviceTransport {
         await withCheckedContinuation { startWaiter = $0 }
     }
 
-    func finish() { response?.resume(returning: []); response = nil }
+    func finish() { response?.resume(returning: DeviceDiscoveryResult(devices: [])); response = nil }
 }
 
 
@@ -192,11 +195,38 @@ private struct RecheckFixture {
         let script = """
         #!/bin/sh
         printf '%s\n' "$*" >> "$(dirname "$0")/calls"
-        if [ "$#" -ne 2 ] || [ "$1" != devices ] || [ "$2" != -l ]; then exit 91; fi
-        \(fails ? "exit 1" : "printf 'List of devices attached\nsetup-fixture device model:Fixture\n'")
+        if [ "$1" = devices ] && [ "$2" = -l ] && [ "$#" -eq 2 ]; then
+          \(fails ? "exit 1" : "printf 'List of devices attached\nsetup-fixture device transport_id:41 model:Fixture\n'")
+        elif [ "$1" = -t ] && [ "$2" = 41 ] && [ "$3" = shell ] && [ "$4" = -T ]; then
+          printf 'ANDRODO_SHELL_V2_STDOUT'
+          printf 'ANDRODO_SHELL_V2_STDERR' >&2
+          exit 73
+        elif [ "$1" = -t ] && [ "$2" = 41 ] && [ "$3" = shell ]; then
+          printf 'setup-fixture\\000Google\\000Fixture\\000'
+        elif [ "$1" = -t ] && [ "$2" = 41 ] && [ "$3" = get-devpath ]; then
+          printf '/dev/bus/usb/001/001\\n'
+        else
+          exit 91
+        fi
         """
         try Data(script.utf8).write(to: executable)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    }
+
+    func assertDiscoveryOnly(commands: [String], refreshCount: Int = 1,
+                             file: StaticString = #filePath, line: UInt = #line) throws {
+        let expectedCallCount = refreshCount * 4
+        XCTAssertEqual(commands.count, expectedCallCount, file: file, line: line)
+        for offset in stride(from: 0, to: commands.count, by: 4) {
+            XCTAssertEqual(commands[offset], "devices -l", file: file, line: line)
+            XCTAssertTrue(commands[offset + 1].hasPrefix("-t 41 shell "), file: file, line: line)
+            XCTAssertEqual(commands[offset + 2], "-t 41 get-devpath", file: file, line: line)
+            XCTAssertTrue(commands[offset + 3].hasPrefix("-t 41 shell -T "), file: file, line: line)
+        }
+        let forbiddenOperations = ["find ", "ls ", "cat ", "pull ", "push "]
+        XCTAssertFalse(commands.contains { command in
+            forbiddenOperations.contains { command.contains($0) }
+        }, "Discovery must not list, read, pull, or write phone files.", file: file, line: line)
     }
 
     func commands() throws -> [String] {

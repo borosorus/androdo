@@ -50,20 +50,20 @@ public actor DefaultCopyEngine: CopyEngine {
         let rootIdentity: String?
         let canonicalLocalRoots: [URL]?
         switch request {
-        case .phoneToMac(let device, let roots, let destination):
+        case .phoneToMac(let session, let roots, let destination):
             guard !roots.isEmpty else { throw EngineError.emptySelection }
             let root = destination.standardizedFileURL.resolvingSymlinksInPath()
             let identity = try LocalFilePublication.rootIdentity(root)
             var entries: [RemoteEntry] = []
             for selectedRoot in Self.prune(roots) {
                 guard let name = selectedRoot.name else { throw EngineError.invalidRemotePath(selectedRoot.description) }
-                try await scanRemote(selectedRoot, device: device, into: &entries, visited: [])
+                try await scanRemote(selectedRoot, session: session, into: &entries, visited: [])
                 // Keep the selected folder name beneath the chosen destination.
                 _ = name
             }
             var scanned: [(RemoteEntry, CopySource, SourceSnapshot)] = []
             for entry in entries {
-                let state = try await remote.inspectDestination(entry.path, on: device)
+                let state = try await remote.inspectDestination(entry.path, on: session)
                 guard let snapshot = Self.remoteSnapshot(entry, state: state) else {
                     throw EngineError.sourceChanged(entry.path)
                 }
@@ -113,7 +113,7 @@ public actor DefaultCopyEngine: CopyEngine {
             }
             found.append(contentsOf: Self.localAliases(mappings, root: destinationRoot))
             conflicts = Self.uniqueConflicts(found)
-        case .macToPhone(let device, _, _, let replaceMissingTargets):
+        case .macToPhone(let session, _, _, let replaceMissingTargets):
             var found: [RestoreConflict] = []
             let fileDestinations = Set(mappings.compactMap { mapping -> RemotePath? in
                 guard case .phone(let path) = mapping.destination, Self.sourceKind(mapping) == .file else { return nil }
@@ -124,8 +124,8 @@ public actor DefaultCopyEngine: CopyEngine {
             }
             for mapping in mappings {
                 guard case .phone(let path) = mapping.destination else { continue }
-                try await validateRemoteAncestors(path.parent ?? .root, device: device)
-                let state = try await remote.inspectDestination(path, on: device)
+                try await validateRemoteAncestors(path.parent ?? .root, session: session)
+                let state = try await remote.inspectDestination(path, on: session)
                 found.append(contentsOf: Self.remoteConflicts(state, mapping: mapping))
                 if case .missing = state, Self.sourceKind(mapping) == .file, replaceMissingTargets.contains(path) {
                     found.append(RestoreConflict(destination: mapping.destination, kind: .fileExists,
@@ -155,11 +155,11 @@ public actor DefaultCopyEngine: CopyEngine {
         guard let record = plans.removeValue(forKey: plan) else {
             throw EngineError.transport("Copy plan expired; create a new plan")
         }
-        let device: DeviceID
+        let session: DeviceSession
         switch record.request {
-        case .phoneToMac(let value, _, _), .macToPhone(let value, _, _, _): device = value
+        case .phoneToMac(let value, _, _), .macToPhone(let value, _, _, _): session = value
         }
-        guard activeDevices.insert(device).inserted else { throw EngineError.deviceUnavailable(device) }
+        guard activeDevices.insert(session.deviceID).inserted else { throw EngineError.deviceUnavailable(session.deviceID) }
         do {
             guard conflictIDs.isSubset(of: Set(record.conflicts.map(\.id))) else {
                 throw EngineError.transport("Replacement approval does not belong to this copy plan")
@@ -168,16 +168,16 @@ public actor DefaultCopyEngine: CopyEngine {
                 throw EngineError.destinationConflict(TransferConflict(destination: Self.destinationText(conflict.destination),
                                                                          kind: Self.engineConflictKind(conflict.kind)))
             }
-            try await recheckDestinations(record, replacing: conflictIDs)
+            try await recheckDestinations(record, session: session, replacing: conflictIDs)
             let operation = OperationID()
             operations[operation] = OperationRecord(latestEvent: OperationEvent(operationID: operation, phase: .transferring))
             tasks[operation] = Task { [weak self] in
                 guard let self else { return }
-                await self.run(operation, record: record, device: device, replacing: conflictIDs)
+                await self.run(operation, record: record, session: session, replacing: conflictIDs)
             }
             return operation
         } catch {
-            activeDevices.remove(device)
+            activeDevices.remove(session.deviceID)
             throw error
         }
     }
@@ -199,18 +199,18 @@ public actor DefaultCopyEngine: CopyEngine {
     public func cancel(_ operation: OperationID) async { tasks[operation]?.cancel() }
     public func result(for operation: OperationID) async -> CopyBatchResult? { results[operation] }
 
-    private func run(_ operation: OperationID, record: RequestRecord, device: DeviceID, replacing approved: Set<UUID>) async {
+    private func run(_ operation: OperationID, record: RequestRecord, session: DeviceSession, replacing approved: Set<UUID>) async {
         var resultsForItems: [CopyItemResult] = []
         var completedBytes: Int64 = 0
         let totalBytes = record.totalBytes
         let conflictsByDestination = Dictionary(uniqueKeysWithValues: record.conflicts.map { ($0.destination, $0) })
-        defer { activeDevices.remove(device); tasks.removeValue(forKey: operation) }
+        defer { activeDevices.remove(session.deviceID); tasks.removeValue(forKey: operation) }
         do {
             for mapping in record.mappings {
                 try Task.checkCancellation()
                 guard let snapshot = record.snapshots[mapping.id] else { throw EngineError.transport("Copy plan lost a source snapshot") }
                 if snapshot.kind == .directory {
-                    try await verifyDirectorySource(mapping, snapshot: snapshot, device: device)
+                    try await verifyDirectorySource(mapping, snapshot: snapshot, session: session)
                 }
                 switch mapping.destination {
                 case .local(let destination):
@@ -222,7 +222,7 @@ public actor DefaultCopyEngine: CopyEngine {
                         try LocalFilePublication.ensureDirectory(root: root, components: components,
                                                                 expectedRootIdentity: rootIdentity)
                     } else {
-                        let staged = try await stageSource(mapping, snapshot: snapshot, device: device)
+                        let staged = try await stageSource(mapping, snapshot: snapshot, session: session)
                         defer { try? FileManager.default.removeItem(at: staged.url.deletingLastPathComponent()) }
                         let conflict = conflictsByDestination[mapping.destination]
                         let replaceIdentity = conflict.flatMap { approved.contains($0.id) ? $0.observedIdentity : nil }
@@ -234,14 +234,14 @@ public actor DefaultCopyEngine: CopyEngine {
                     }
                 case .phone(let destination):
                     if snapshot.kind == .directory {
-                        try await ensureRemoteDirectories(destination, on: device)
+                        try await ensureRemoteDirectories(destination, on: session)
                     } else {
-                        try await ensureRemoteDirectories(destination.parent ?? .root, on: device)
-                        let staged = try await stageSource(mapping, snapshot: snapshot, device: device)
+                        try await ensureRemoteDirectories(destination.parent ?? .root, on: session)
+                        let staged = try await stageSource(mapping, snapshot: snapshot, session: session)
                         defer { try? FileManager.default.removeItem(at: staged.url.deletingLastPathComponent()) }
                         let conflict = conflictsByDestination[mapping.destination]
                         let replaceIdentity = conflict.flatMap { approved.contains($0.id) ? $0.observedIdentity : nil }
-                        try await remote.publishStagedFile(from: staged.url, to: destination, on: device,
+                        try await remote.publishStagedFile(from: staged.url, to: destination, on: session,
                                                            expected: staged.reference, replacing: replaceIdentity)
                         completedBytes += snapshot.size
                     }
@@ -295,7 +295,7 @@ public actor DefaultCopyEngine: CopyEngine {
         finish(operation, results: items)
     }
 
-    private func stageSource(_ mapping: CopyMapping, snapshot: SourceSnapshot, device: DeviceID) async throws -> (url: URL, reference: ContentObjectReference) {
+    private func stageSource(_ mapping: CopyMapping, snapshot: SourceSnapshot, session: DeviceSession) async throws -> (url: URL, reference: ContentObjectReference) {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PhoneBackup-Copy-\(UUID().uuidString)", isDirectory: true)
         guard directory.path.withCString({ Darwin.mkdir($0, S_IRWXU) }) == 0 else {
             throw EngineError.repositoryIO("Could not create private copy staging folder")
@@ -304,19 +304,19 @@ public actor DefaultCopyEngine: CopyEngine {
         do {
             switch mapping.source {
             case .phone(let entry):
-                try await validateRemoteSourceAncestors(entry.path, device: device)
+                try await validateRemoteSourceAncestors(entry.path, session: session)
                 var transferred = false
                 for attempt in 0..<3 {
                     try Task.checkCancellation()
-                    guard case .regularFile = try await remote.inspectDestination(entry.path, on: device) else {
+                    guard case .regularFile = try await remote.inspectDestination(entry.path, on: session) else {
                         throw EngineError.sourceChanged(entry.path)
                     }
-                    let before = try await remote.metadata(of: entry.path, on: device)
+                    let before = try await remote.metadata(of: entry.path, on: session)
                     guard before.kind == .file, Self.identity(of: before) == snapshot.identity else {
                         throw EngineError.sourceChanged(entry.path)
                     }
-                    try await remote.pull(from: entry.path, on: device, to: staged)
-                    let after = try await remote.metadata(of: entry.path, on: device)
+                    try await remote.pull(from: entry.path, on: session, to: staged)
+                    let after = try await remote.metadata(of: entry.path, on: session)
                     if after == before {
                         transferred = true
                         break
@@ -336,11 +336,11 @@ public actor DefaultCopyEngine: CopyEngine {
         }
     }
 
-    private func scanRemote(_ path: RemotePath, device: DeviceID, into entries: inout [RemoteEntry], visited: Set<RemotePath>) async throws {
+    private func scanRemote(_ path: RemotePath, session: DeviceSession, into entries: inout [RemoteEntry], visited: Set<RemotePath>) async throws {
         var visited = visited
         guard visited.insert(path).inserted else { throw EngineError.transport("Remote directory cycle detected") }
-        try await validateRemoteSourceAncestors(path, device: device)
-        var state = try await remote.inspectDestination(path, on: device)
+        try await validateRemoteSourceAncestors(path, session: session)
+        var state = try await remote.inspectDestination(path, on: session)
         let sdcardAlias = try RemotePath("/sdcard")
         if path == sdcardAlias, case .symbolicLink = state {
             state = .directory(identity: "android-shared-storage-alias")
@@ -350,14 +350,14 @@ public actor DefaultCopyEngine: CopyEngine {
             throw EngineError.destinationConflict(TransferConflict(destination: path.description, kind: .unsafePath))
         default: break
         }
-        let entry = try await remote.metadata(of: path, on: device)
+        let entry = try await remote.metadata(of: path, on: session)
         switch (state, entry.kind) {
         case (.regularFile, .file): entries.append(entry)
         case (.directory, .directory):
             entries.append(entry)
-            let children = try await remote.children(of: path, on: device)
+            let children = try await remote.children(of: path, on: session)
             for child in children.sorted(by: { RemotePath.bytewiseLess($0.path, $1.path) }) {
-                try await scanRemote(child.path, device: device, into: &entries, visited: visited)
+                try await scanRemote(child.path, session: session, into: &entries, visited: visited)
             }
         case (.symbolicLink, _), (_, .symbolicLink), (.other, _), (_, .other):
             throw EngineError.destinationConflict(TransferConflict(destination: path.description, kind: .unsafePath))
@@ -365,7 +365,7 @@ public actor DefaultCopyEngine: CopyEngine {
         }
     }
 
-    private func recheckDestinations(_ record: RequestRecord, replacing approved: Set<UUID>) async throws {
+    private func recheckDestinations(_ record: RequestRecord, session: DeviceSession, replacing approved: Set<UUID>) async throws {
         for mapping in record.mappings {
             let conflict = record.conflicts.first(where: { $0.destination == mapping.destination })
             switch mapping.destination {
@@ -379,19 +379,15 @@ public actor DefaultCopyEngine: CopyEngine {
                 try Self.checkLocal(state, mapping: mapping, conflict: conflict,
                                     replacing: conflict.map { approved.contains($0.id) } ?? false)
             case .phone(let destination):
-                let device: DeviceID
-                if case .phoneToMac(let value, _, _) = record.request { device = value }
-                else if case .macToPhone(let value, _, _, _) = record.request { device = value }
-                else { throw EngineError.transport("Invalid copy direction") }
-                try await validateRemoteAncestors(destination.parent ?? .root, device: device)
-                let state = try await remote.inspectDestination(destination, on: device)
+                try await validateRemoteAncestors(destination.parent ?? .root, session: session)
+                let state = try await remote.inspectDestination(destination, on: session)
                 try Self.checkRemote(state, mapping: mapping, conflict: conflict,
                                      replacing: conflict.map { approved.contains($0.id) } ?? false)
             }
         }
     }
 
-    private func verifyDirectorySource(_ mapping: CopyMapping, snapshot: SourceSnapshot, device: DeviceID) async throws {
+    private func verifyDirectorySource(_ mapping: CopyMapping, snapshot: SourceSnapshot, session: DeviceSession) async throws {
         switch mapping.source {
         case .local:
             let descriptor = try Self.openLocalSource(snapshot)
@@ -402,23 +398,23 @@ public actor DefaultCopyEngine: CopyEngine {
                 throw EngineError.repositoryIO("Local copy source directory changed after planning")
             }
         case .phone(let entry):
-            try await validateRemoteSourceAncestors(entry.path, device: device)
-            guard case .directory = try await remote.inspectDestination(entry.path, on: device) else {
+            try await validateRemoteSourceAncestors(entry.path, session: session)
+            guard case .directory = try await remote.inspectDestination(entry.path, on: session) else {
                 throw EngineError.sourceChanged(entry.path)
             }
-            let current = try await remote.metadata(of: entry.path, on: device)
+            let current = try await remote.metadata(of: entry.path, on: session)
             guard current.kind == .directory, Self.identity(of: current) == snapshot.identity else {
                 throw EngineError.sourceChanged(entry.path)
             }
         }
     }
 
-    private func validateRemoteAncestors(_ parent: RemotePath, device: DeviceID) async throws {
+    private func validateRemoteAncestors(_ parent: RemotePath, session: DeviceSession) async throws {
         var path = RemotePath.root
         for (index, component) in parent.components.enumerated() {
             path = try path.appending(component)
             if index == 0 && component == "sdcard" { continue }
-            switch try await remote.inspectDestination(path, on: device) {
+            switch try await remote.inspectDestination(path, on: session) {
             case .missing: return
             case .directory: continue
             case .regularFile, .symbolicLink, .other:
@@ -427,12 +423,12 @@ public actor DefaultCopyEngine: CopyEngine {
         }
     }
 
-    private func validateRemoteSourceAncestors(_ source: RemotePath, device: DeviceID) async throws {
+    private func validateRemoteSourceAncestors(_ source: RemotePath, session: DeviceSession) async throws {
         var path = RemotePath.root
         for (index, component) in source.components.dropLast().enumerated() {
             path = try path.appending(component)
             if index == 0 && component == "sdcard" { continue }
-            switch try await remote.inspectDestination(path, on: device) {
+            switch try await remote.inspectDestination(path, on: session) {
             case .directory: continue
             case .missing: throw EngineError.missingPath(path)
             case .regularFile, .symbolicLink, .other:
@@ -441,14 +437,14 @@ public actor DefaultCopyEngine: CopyEngine {
         }
     }
 
-    private func ensureRemoteDirectories(_ path: RemotePath, on device: DeviceID) async throws {
+    private func ensureRemoteDirectories(_ path: RemotePath, on session: DeviceSession) async throws {
         var current = RemotePath.root
         for (index, component) in path.components.enumerated() {
             current = try current.appending(component)
             if index == 0 && component == "sdcard" { continue }
-            switch try await remote.inspectDestination(current, on: device) {
+            switch try await remote.inspectDestination(current, on: session) {
             case .directory: continue
-            case .missing: try await remote.createDestinationDirectory(current, on: device)
+            case .missing: try await remote.createDestinationDirectory(current, on: session)
             case .regularFile, .symbolicLink, .other:
                 throw EngineError.destinationConflict(TransferConflict(destination: current.description, kind: .unsafePath))
             }

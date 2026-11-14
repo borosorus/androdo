@@ -12,7 +12,7 @@ final class BackupSelectionDraftTests: XCTestCase {
         let preferences = AppPreferences(defaults: defaults)
         let model = AppModel(services: AppServices(repositoryStore: FakeBackupRepositoryStore()),
                              preferences: preferences, loadOnStart: false)
-        let device = AndroidDevice(id: try DeviceID(serial: "pixel-test"), state: .device, model: "Pixel")
+        let device = fixtureDevice(id: try DeviceID(value: "pixel-test"), state: .device, model: "Pixel")
         model.selectDevice(device)
         let parent = try RemotePath("/sdcard/Pictures")
         let child = try RemotePath("/sdcard/Pictures/Camera")

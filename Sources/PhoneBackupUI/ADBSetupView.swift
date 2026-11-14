@@ -53,7 +53,8 @@ struct ADBSetupView: View {
                     platformToolsSetup
                 }
 
-                AndroidConnectionGuide(hasADB: model.hasADB, deviceState: model.selectedDevice?.state)
+                AndroidConnectionGuide(hasADB: model.hasADB, deviceState: model.connectionGuideDeviceState,
+                                       discoveryIssue: model.connectionGuideDiscoveryIssue)
 
                 if model.hasADB {
                     DisclosureGroup("Install or switch Platform Tools") {
