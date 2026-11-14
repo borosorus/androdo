@@ -1,44 +1,126 @@
 import PhoneBackupCore
 import SwiftUI
 
-struct PhoneRestoreDestinationSheet: View {
+public struct PhoneRestoreDestinationSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var showingFolderPicker = false
     @State private var folderBrowser: RemoteBrowserModel?
+    @State private var useOriginalPaths = true
+    @State private var selectedFolder: RemotePath?
+    @State private var policy: PhoneRestoreConflictPolicy?
+    @State private var showingReview = false
 
-    var body: some View {
+    public init() {}
+
+    public var body: some View {
+        VStack(spacing: 0) {
+            if showingReview {
+                LocalExportReviewSheet(backToSetup: {
+                    showingReview = false
+                    model.cancelExportReview()
+                })
+            } else {
+                setup
+            }
+        }
+        .interactiveDismissDisabled(model.isStartingOperation || model.isPlanningExport)
+        .onChange(of: model.isShowingExportReview, initial: true) { _, visible in
+            if visible { showingReview = true }
+            else if showingReview { dismiss() }
+        }
+        .onDisappear {
+            model.cancelRestorePlanning()
+            if model.restoreTargetIsPhone { model.cancelExportReview() }
+        }
+    }
+
+    private var setup: some View {
         ReviewSheetLayout(title: "Restore to Android",
-                          subtitle: "Existing files are reviewed before replacement.",
-                          minimumWidth: 540, minimumHeight: 360) {
-            VStack(alignment: .leading, spacing: 12) {
+                          subtitle: "Choose where to restore and how to handle existing files.",
+                          minimumWidth: 580, minimumHeight: 440) {
+            VStack(alignment: .leading, spacing: 20) {
                 if let repository = model.selectedRepository {
-                    Label("Backup device: \(repository.displayName)", systemImage: "cable.connector")
-                        .font(.callout).foregroundStyle(.secondary)
+                    Label(repository.displayName, systemImage: "cable.connector")
+                        .font(.headline)
                 }
                 if !hasRepositoryDevice {
                     MessageBanner(text: "Connect and authorize the Android device associated with this restore point to continue.", symbol: "cable.connector.slash", isWarning: true)
                 }
-                Button { planPhoneRestore(to: nil) } label: {
-                    destinationRow("Original paths", detail: "Write files back to the Android paths stored in this restore point.", symbol: "arrow.uturn.backward")
-                }.buttonStyle(.plain).disabled(!hasRepositoryDevice)
-                Button { openFolderPicker() } label: {
-                    destinationRow("Choose a phone folder…", detail: "Place the selected files beneath another shared-storage folder.", symbol: "folder")
-                }.buttonStyle(.plain).disabled(!hasRepositoryDevice)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Destination").font(.headline)
+                    Picker("Destination", selection: $useOriginalPaths) {
+                        Text("Original paths").tag(true)
+                        Text("Another folder").tag(false)
+                    }.pickerStyle(.segmented).labelsHidden()
+                    if useOriginalPaths {
+                        Text("Restore to the Android paths saved in this backup.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    } else {
+                        HStack {
+                            Label(selectedFolder?.description ?? "Choose a phone folder", systemImage: "folder")
+                                .lineLimit(2).textSelection(.enabled)
+                            Spacer()
+                            Button("Choose…") { openFolderPicker() }
+                        }
+                    }
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Existing files").font(.headline)
+                    Picker("Existing files", selection: $policy) {
+                        Text("Choose how to handle existing files…").tag(Optional<PhoneRestoreConflictPolicy>.none)
+                        Text("Stop if a file exists").tag(Optional(PhoneRestoreConflictPolicy.stopIfFileExists))
+                        Text("Replace files in this restore").tag(Optional(PhoneRestoreConflictPolicy.replaceFiles))
+                    }.labelsHidden()
+                    Text(policyExplanation).font(.callout).foregroundStyle(.secondary)
+                }
+                .disabled(!hasRepositoryDevice || model.isPlanningExport)
+                if model.isPlanningExport {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(planningLabel).font(.callout)
+                        Text("No files are being written. You can cancel this check.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+                if let error = model.errorMessage {
+                    MessageBanner(text: error, symbol: "exclamationmark.triangle", isWarning: true)
+                }
             }
+            .disabled(model.isPlanningExport)
         } footer: {
-            Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+            Button("Cancel") { model.cancelRestorePlanning(); dismiss() }.keyboardShortcut(.cancelAction)
+            Button("Review Restore") {
+                guard let policy else { return }
+                Task { await model.planPhoneRestore(to: useOriginalPaths ? nil : selectedFolder, policy: policy) }
+            }
+            .buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue)
+            .disabled(!hasRepositoryDevice || model.isBusy || policy == nil || (!useOriginalPaths && selectedFolder == nil))
+            .keyboardShortcut(.defaultAction)
         }
         .sheet(isPresented: $showingFolderPicker) {
             if let folderBrowser {
                 PhoneFolderPicker(browser: folderBrowser) { path in
-                    await model.planPhoneRestore(to: path)
-                    let succeeded = model.isShowingExportReview
-                    if succeeded { dismiss() }
-                    return succeeded
+                    selectedFolder = path
+                    return true
                 }
             }
         }
+    }
+
+    private var policyExplanation: String {
+        switch policy {
+        case .none: "Choose how to handle existing files. Nothing is written until you review and confirm the restore."
+        case .stopIfFileExists: "Existing files block the restore. Some Android storage requires replacement permission even for new files."
+        case .replaceFiles: "Replace matching files with the saved versions. Also allows creating files on Android storage that requires replacement permission. Folders and unsafe paths are never replaced."
+        }
+    }
+
+    private var planningLabel: String {
+        guard let progress = model.restorePlanningProgress else { return "Preparing restore…" }
+        let phase = progress.stage == .verifyingBackup ? "Verifying backup" : "Checking destination paths"
+        return progress.totalItems > 0 ? "\(phase) · \(progress.completedItems) of \(progress.totalItems)" : "\(phase)…"
     }
 
     private var hasRepositoryDevice: Bool {
@@ -46,33 +128,11 @@ struct PhoneRestoreDestinationSheet: View {
         return model.devices.contains { $0.id == repository.deviceID && $0.state == .device }
     }
 
-    private func planPhoneRestore(to folder: RemotePath?) {
-        Task {
-            await model.planPhoneRestore(to: folder)
-            if model.isShowingExportReview { dismiss() }
-        }
-    }
-
     private func openFolderPicker() {
         guard let repository = model.selectedRepository,
               let browser = model.makeRemoteBrowser(for: repository.deviceID) else { return }
         folderBrowser = browser
         showingFolderPicker = true
-    }
-
-    private func destinationRow(_ title: String, detail: String, symbol: String) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: symbol).font(.title3).foregroundStyle(.tint).frame(width: 38, height: 38)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 9))
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.headline)
-                Text(detail).font(.callout).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-        }
-        .contentShape(Rectangle()).padding(12)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
@@ -120,7 +180,7 @@ private struct PhoneFolderPicker: View {
                 }
             }
             .buttonStyle(.borderedProminent).tint(AppIdentity.brandBlue)
-            .disabled(browser.isLoading || browser.errorMessage != nil)
+            .disabled(browser.isLoading || browser.errorMessage != nil || !browser.hasOpenedRoot)
             .keyboardShortcut(.defaultAction)
         }
     }

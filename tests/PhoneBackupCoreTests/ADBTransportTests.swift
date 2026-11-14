@@ -85,6 +85,57 @@ final class ADBTransportTests: XCTestCase {
         XCTAssertTrue(calls[0].last?.contains("'\\''") == true)
     }
 
+    func testDestinationBatchQuotesPathsAndPreservesIdentityWhitespace() async throws {
+        let paths = try ["/sdcard/Dad's Pictures/line\nbreak|$(noop).jpg", "/sdcard/Other"].map(RemotePath.init)
+        let identity = "253:17:42:2026-01-01 00:00:00.000000000 +0000"
+        let runner = StubCommandRunner(outputs: [CommandOutput(data: Data("F|\(identity)\0M\0".utf8), exitCode: 0)])
+        let transport = try makeTransport(runner: runner)
+        let states = try await transport.inspectDestinations(paths, on: DeviceID(serial: "phone-1"))
+        XCTAssertEqual(states[paths[0]], .regularFile(identity: identity, size: 42))
+        XCTAssertEqual(states[paths[1]], .missing)
+        let calls = await runner.arguments()
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertTrue(calls[0].last?.contains("'\\''") == true)
+        XCTAssertTrue(calls[0].last?.contains("\"$(stat") == true, "Stat command substitution must stay quoted")
+    }
+
+    func testDestinationBatchesBoundPathCountAndCommandBytes() async throws {
+        let device = try DeviceID(serial: "phone-1")
+        let runner = StubCommandRunner(outputs: [64, 64, 2].map {
+            CommandOutput(data: Data(String(repeating: "M\0", count: $0).utf8), exitCode: 0)
+        })
+        let transport = try makeTransport(runner: runner)
+        let paths = try (0..<130).map { try RemotePath("/sdcard/file-\($0)") }
+        let states = try await transport.inspectDestinations(paths, on: device)
+        XCTAssertEqual(states.count, 130)
+        let calls = await runner.arguments()
+        XCTAssertEqual(calls.count, 3)
+
+        // Twelve 2KB paths fit the byte budget; a thirteenth starts a new command.
+        let longRunner = StubCommandRunner(outputs: [12, 8].map {
+            CommandOutput(data: Data(String(repeating: "M\0", count: $0).utf8), exitCode: 0)
+        })
+        let longTransport = try makeTransport(runner: longRunner)
+        let longPaths = try (0..<20).map { try RemotePath("/sdcard/\(String(repeating: "x", count: 1950))/\($0)") }
+        let longStates = try await longTransport.inspectDestinations(longPaths, on: device)
+        XCTAssertEqual(longStates.count, 20)
+        let longCalls = await longRunner.arguments()
+        XCTAssertEqual(longCalls.count, 2)
+        XCTAssertTrue(longCalls.allSatisfy { ($0.last?.utf8.count ?? 0) < 25_000 })
+    }
+
+    func testDestinationBatchRejectsTruncatedExtraAndUnknownRecords() async throws {
+        for output in ["M", "M\0M\0", "Q|1:2:3:date\0", "F|bad\0", "F|1:2:-1:date\0"] {
+            let transport = try makeTransport(runner: StubCommandRunner(outputs: [CommandOutput(data: Data(output.utf8), exitCode: 0)]))
+            do {
+                _ = try await transport.inspectDestinations([RemotePath("/sdcard/file")], on: DeviceID(serial: "phone-1"))
+                XCTFail("Malformed batch should fail: \(output.debugDescription)")
+            } catch let error as EngineError {
+                guard case .transport = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+        }
+    }
+
     func testRemotePublicationVerifiesStagingAndUsesExclusiveLink() async throws {
         let path = try RemotePath("/sdcard/RestoreTrial/photo.jpg")
         let bytes = Data("verified remote data".utf8)

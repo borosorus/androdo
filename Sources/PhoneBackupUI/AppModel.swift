@@ -50,6 +50,7 @@ public final class AppModel {
     public private(set) var restoreResult: RestoreBatchResult?
     public private(set) var isPlanningBackup = false
     public private(set) var isPlanningExport = false
+    public private(set) var restorePlanningProgress: RestorePlanningProgress?
     public private(set) var isPlanningCopy = false
     public private(set) var isStartingOperation = false
     public private(set) var isLoadingFolder = false
@@ -66,6 +67,8 @@ public final class AppModel {
     @ObservationIgnored private let preferences: AppPreferences
     @ObservationIgnored private let locationAccess: BackupLocationAccess
     @ObservationIgnored private var planningTask: Task<BackupPlan, Error>?
+    @ObservationIgnored private var restorePlanningTask: Task<RestorePlan, Error>?
+    @ObservationIgnored private var restorePlanningRequest: UUID?
     @ObservationIgnored private var operationTask: Task<Void, Never>?
     @ObservationIgnored private var activeOperationKind: ActiveOperationKind?
     @ObservationIgnored private var activeActivityID: UUID?
@@ -649,7 +652,7 @@ public final class AppModel {
         await planRestore(request, title: "Review export")
     }
 
-    public func planPhoneRestore(to folder: RemotePath?) async {
+    public func planPhoneRestore(to folder: RemotePath?, policy: PhoneRestoreConflictPolicy) async {
         guard !isBusy, let repositoryInfo = selectedRepository,
               let point = selectedRestorePoint, !selectedRestoreRoots.isEmpty else { return }
         guard devices.contains(where: { $0.id == repositoryInfo.deviceID && $0.state == .device }) else {
@@ -664,19 +667,38 @@ public final class AppModel {
         }
         let target: RestoreTarget = folder.map { .phoneFolder($0, sourceBase: sourceBase) } ?? .originalPhonePaths
         let request = RestoreRequest(repository: repositoryInfo.id, point: point.id,
-                                     selectedRoots: Array(selectedRestoreRoots), target: target)
+                                     selectedRoots: Array(selectedRestoreRoots), target: target, phoneConflictPolicy: policy)
         let title = folder.map { "Review phone restore to \($0.description)" } ?? "Review phone restore"
         await planRestore(request, title: title)
     }
 
     private func planRestore(_ request: RestoreRequest, title: String) async {
         let generation = contextGeneration
+        let token = UUID()
+        restorePlanningRequest = token
         isPlanningExport = true
+        restorePlan = nil
+        restorePlanningProgress = RestorePlanningProgress(stage: .verifyingBackup, completedItems: 0, totalItems: 0)
         statusMessage = nil
-        defer { isPlanningExport = false }
+        errorMessage = nil
+        let update: @Sendable (RestorePlanningProgress) async -> Void = { [weak self] progress in
+            await self?.updateRestorePlanning(progress, token: token)
+        }
+        let engine = services.restoreEngine
+        let task = Task { try await engine.planRestore(request, progress: update) }
+        restorePlanningTask = task
+        defer {
+            if restorePlanningRequest == token {
+                restorePlanningRequest = nil
+                restorePlanningTask = nil
+                restorePlanningProgress = nil
+                isPlanningExport = false
+            }
+        }
         do {
-            let plan = try await services.restoreEngine.planRestore(request)
-            guard generation == contextGeneration,
+            let plan = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            try Task.checkCancellation()
+            guard restorePlanningRequest == token, generation == contextGeneration,
                   selectedRepositoryID == request.repository,
                   selectedRestorePoint?.id == request.point,
                   selectedRestoreRoots == Set(request.selectedRoots) else { return }
@@ -684,9 +706,25 @@ public final class AppModel {
             restorePlanTitle = title
             isShowingExportReview = true
             errorMessage = nil
+        } catch is CancellationError {
+            // Cancellation does not publish a review or an alert.
         } catch {
+            guard restorePlanningRequest == token, generation == contextGeneration else { return }
             errorMessage = UserFacingError.message(for: error)
         }
+    }
+
+    private func updateRestorePlanning(_ progress: RestorePlanningProgress, token: UUID) {
+        guard restorePlanningRequest == token else { return }
+        restorePlanningProgress = progress
+    }
+
+    public func cancelRestorePlanning() {
+        restorePlanningTask?.cancel()
+        restorePlanningTask = nil
+        restorePlanningRequest = nil
+        restorePlanningProgress = nil
+        isPlanningExport = false
     }
 
     public func startLocalExport(replacing conflicts: Set<UUID>) async {
@@ -707,16 +745,10 @@ public final class AppModel {
             statusMessage = nil
             monitorRestore(operation, title: restorePlanTitle.replacingOccurrences(of: "Review ", with: ""))
         } catch {
-            if case EngineError.safeNoOverwriteUnavailable(let path) = error,
-               await replanRestoreWithExplicitMissingTarget(plan.request, path: path) {
-                activeRestoreRequest = nil
-                return
-            } else {
-                activeRestoreRequest = nil
-                restorePlan = nil
-                isShowingExportReview = false
-                errorMessage = UserFacingError.message(for: error)
-            }
+            activeRestoreRequest = nil
+            restorePlan = nil
+            isShowingExportReview = false
+            errorMessage = UserFacingError.message(for: error)
         }
     }
 
@@ -724,25 +756,6 @@ public final class AppModel {
         switch target {
         case .originalPhonePaths, .phoneFolder: true
         case .localFolder: false
-        }
-    }
-
-    private func replanRestoreWithExplicitMissingTarget(_ request: RestoreRequest, path: RemotePath) async -> Bool {
-        guard isPhoneRestoreTarget(request.target) else { return false }
-        isPlanningExport = true
-        defer { isPlanningExport = false }
-        do {
-            let explicitRequest = RestoreRequest(repository: request.repository, point: request.point,
-                                                 selectedRoots: request.selectedRoots, target: request.target,
-                                                 replaceMissingPhoneTargets: [path])
-            restorePlan = try await services.restoreEngine.planRestore(explicitRequest)
-            restorePlanTitle = "Review explicit replacement for \(path.description)"
-            isShowingExportReview = true
-            statusMessage = "Android cannot safely publish without overwrite. This new plan targets only the exact missing path shown; approve its replacement below."
-            return true
-        } catch {
-            errorMessage = UserFacingError.message(for: error)
-            return false
         }
     }
 
@@ -1025,11 +1038,6 @@ public final class AppModel {
             }
             if terminal?.phase == .completed { self.statusMessage = "Restore completed and verified." }
             else if terminal?.phase == .incomplete { self.statusMessage = "Restore finished with items that need attention." }
-            if let failure = terminal?.failure, case EngineError.safeNoOverwriteUnavailable(let path) = failure,
-               let request = self.activeRestoreRequest {
-                _ = await self.replanRestoreWithExplicitMissingTarget(request, path: path)
-                self.restoreResult = nil
-            }
             if let request = self.activeRestoreRequest, self.isPhoneRestoreTarget(request.target) {
                 self.fileBrowser.invalidateVisitedFolders()
             }

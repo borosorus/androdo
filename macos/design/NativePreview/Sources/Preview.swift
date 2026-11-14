@@ -12,7 +12,10 @@ struct NativePreviewApp: App {
     var body: some Scene {
         WindowGroup("Androdo · Fictional preview") {
             Group {
-                if CommandLine.arguments.contains("--scope") {
+                if CommandLine.arguments.contains("--restore") || CommandLine.arguments.contains("--restore-review") {
+                    if fixture.ready { PhoneRestoreDestinationSheet() }
+                    else { ProgressView("Preparing fictional restore…") }
+                } else if CommandLine.arguments.contains("--scope") {
                     if fixture.ready, let device = fixture.model.selectedDevice {
                         BackupSelectionEditor(device: device, selection: fixture.model.backupSelection)
                     } else { ProgressView("Loading fictional scope…") }
@@ -60,6 +63,7 @@ final class PreviewFixture {
         let firstUse = CommandLine.arguments.contains("--first-use")
         model = AppModel(services: AppServices(repositoryStore: store, deviceTransport: firstUse ? nil : transport,
                                                remoteAccess: firstUse ? nil : transport,
+                                               remoteDestinationAccess: firstUse ? nil : transport,
                                                backupEngine: firstUse ? nil : DefaultBackupEngine(remote: transport, repositoryStore: store)),
                          preferences: AppPreferences(defaults: defaults), loadOnStart: false,
                          adbResolver: { _ in nil })
@@ -79,7 +83,7 @@ final class PreviewFixture {
         await model.chooseBackupLocation(root)
         model.setBackupSelection(BackupSelection(scope: .selected(entries.map(\.path))))
         if CommandLine.arguments.contains("--files") { model.section = .files }
-        if CommandLine.arguments.contains("--result") {
+        if CommandLine.arguments.contains("--result") || CommandLine.arguments.contains("--restore") || CommandLine.arguments.contains("--restore-review") {
             await model.reviewBackup()
             await model.startBackup()
             let deadline = ContinuousClock.now.advanced(by: .seconds(3))
@@ -88,6 +92,15 @@ final class PreviewFixture {
         if CommandLine.arguments.contains("--backups") {
             model.section = .backups
             await model.selectRestorePoint(point)
+        }
+        if CommandLine.arguments.contains("--restore") || CommandLine.arguments.contains("--restore-review") {
+            if let saved = try? await store.restorePoints(in: repository.id).first(where: { $0.id != point.id }) {
+                await model.selectRestorePoint(saved)
+                model.toggleRestoreRoot(entries[0].path)
+                if CommandLine.arguments.contains("--restore-review") {
+                    await model.planPhoneRestore(to: nil, policy: .replaceFiles)
+                }
+            }
         }
         ready = true
     }
@@ -130,6 +143,13 @@ private struct WindowCapture: NSViewRepresentable {
                 window.setContentSize(NSSize(width: fixture.size.width, height: fixture.size.height + max(0, inset)))
                 window.contentView?.layoutSubtreeIfNeeded()
                 try? await Task.sleep(for: .milliseconds(100))
+                // Catch review state being cleared by setup/review view lifecycle changes.
+                if CommandLine.arguments.contains("--restore-review"),
+                   fixture.model.restorePlan?.fileCount != 1 || !fixture.model.isShowingExportReview {
+                    fixture.cleanup()
+                    NSApp.terminate(nil)
+                    return
+                }
                 if let frameView = window.contentView?.superview,
                    let bitmap = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) {
                     frameView.cacheDisplay(in: frameView.bounds, to: bitmap)

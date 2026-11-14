@@ -108,7 +108,8 @@ public struct MainWindow: View {
         .sheet(isPresented: $model.isShowingBackupReview) {
             BackupReviewSheet()
         }
-        .sheet(isPresented: $model.isShowingExportReview) {
+        .sheet(isPresented: Binding(get: { model.isShowingExportReview && !model.restoreTargetIsPhone },
+                                    set: { if !$0 && !model.restoreTargetIsPhone { model.cancelExportReview() } })) {
             LocalExportReviewSheet()
         }
         .sheet(isPresented: $model.isShowingCopyReview) { CopyReviewSheet() }

@@ -305,17 +305,16 @@ final class RestoreEngineTests: XCTestCase {
         }
     }
 
-    func testMissingAndroidTargetCanBeReplannedWithExplicitReplacementPolicy() async throws {
+    func testMissingAndroidTargetUsesExplicitBatchReplacementPolicy() async throws {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let device = AndroidDevice(id: fixture.repository.deviceID, state: .device)
         let remote = FakeDeviceTransport(devices: [device])
         let targetFolder = try RemotePath("/sdcard/RestoreTrial")
-        let targetFile = try targetFolder.appending("photo.jpg")
         let engine = DefaultRestoreEngine(repositoryStore: fixture.store, remote: remote)
         let request = RestoreRequest(repository: fixture.repository.id, point: fixture.point.id,
                                      selectedRoots: [fixture.file], target: .phoneFolder(targetFolder, sourceBase: fixture.base),
-                                     replaceMissingPhoneTargets: [targetFile])
+                                     phoneConflictPolicy: .replaceFiles)
 
         let plan = try await engine.planRestore(request)
         let conflict = try XCTUnwrap(plan.conflicts.first)
@@ -323,6 +322,143 @@ final class RestoreEngineTests: XCTestCase {
         let operation = try await engine.startRestore(plan.id, replacing: [conflict.id])
         let events = await collectEvents(from: engine, operation: operation)
         XCTAssertEqual(events.last?.phase, .completed)
+    }
+
+    func testOriginalPathsReplaceExistingAndMissingFilesInOneReviewedBatch() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let device = AndroidDevice(id: fixture.repository.deviceID, state: .device)
+        let remote = FakeDeviceTransport(devices: [device])
+        await remote.setSupportsNoOverwritePublication(false)
+        let second = try fixture.base.appending("second.jpg")
+        let saved = try await fixture.store.entries(in: fixture.repository.id, point: fixture.point.id, below: nil)
+        let source = try XCTUnwrap(saved.first { $0.path == fixture.file })
+        let point = try await fixture.store.publish(RestorePointManifest(selection: BackupSelection(scope: .selected([fixture.base])), entries: saved + [
+            BackupEntry(path: second, kind: .file, size: source.size, modifiedAt: nil, contentHash: source.contentHash)
+        ]), in: fixture.repository.id)
+        await remote.seed(RemoteEntry(path: fixture.file, kind: .file, size: 3), on: device.id, data: Data("old".utf8))
+        let existing = try await remote.inspectDestination(fixture.file, on: device.id)
+        let engine = DefaultRestoreEngine(repositoryStore: fixture.store, remote: remote)
+        let plan = try await engine.planRestore(RestoreRequest(repository: fixture.repository.id, point: point.id,
+            selectedRoots: [fixture.base], target: .originalPhonePaths, phoneConflictPolicy: .replaceFiles))
+        XCTAssertEqual(plan.conflicts.count, 2)
+        XCTAssertEqual(plan.conflicts.first { $0.destination == .phone(second) }?.observedIdentity,
+                       RestoreConflict.approvedMissingTargetIdentity)
+        if case .regularFile(let identity, _) = existing {
+            XCTAssertEqual(plan.conflicts.first { $0.destination == .phone(fixture.file) }?.observedIdentity, identity)
+        } else { XCTFail("Fixture should have an existing file") }
+        let operation = try await engine.startRestore(plan.id, replacing: Set(plan.conflicts.map(\.id)))
+        let events = await collectEvents(from: engine, operation: operation)
+        XCTAssertEqual(events.last?.phase, .completed)
+        let publications = await remote.recordedPublications()
+        XCTAssertEqual(Set(publications.map(\.path)), [fixture.file, second])
+        XCTAssertTrue(publications.allSatisfy { $0.replacing != nil })
+    }
+
+    func testPhonePolicyCannotBypassBatchApprovalOrReplaceUnsafeTypes() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let device = AndroidDevice(id: fixture.repository.deviceID, state: .device)
+        let scenarios: [(PhoneRestoreConflictPolicy, RemoteEntryKind?, Bool)] = [
+            (.stopIfFileExists, .file, true),
+            (.replaceFiles, nil, false),
+            (.replaceFiles, .directory, true),
+            (.replaceFiles, .symbolicLink, true),
+            (.replaceFiles, .other, true)
+        ]
+        for (policy, kind, approve) in scenarios {
+            let remote = FakeDeviceTransport(devices: [device])
+            if let kind { await remote.seed(RemoteEntry(path: fixture.file, kind: kind, size: 3), on: device.id) }
+            let engine = DefaultRestoreEngine(repositoryStore: fixture.store, remote: remote)
+            let plan = try await engine.planRestore(RestoreRequest(repository: fixture.repository.id, point: fixture.point.id,
+                selectedRoots: [fixture.file], target: .originalPhonePaths, phoneConflictPolicy: policy))
+            do {
+                _ = try await engine.startRestore(plan.id, replacing: approve ? Set(plan.conflicts.map(\.id)) : [])
+                XCTFail("Policy and explicit approval must both permit publication")
+            } catch let error as EngineError {
+                guard case .destinationConflict = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+            let publications = await remote.recordedPublications()
+            XCTAssertTrue(publications.isEmpty)
+        }
+    }
+
+    func testPhoneReplacementRejectsChangedOrNewlyAppearedFiles() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let device = AndroidDevice(id: fixture.repository.deviceID, state: .device)
+        for initiallyExists in [false, true] {
+            let remote = FakeDeviceTransport(devices: [device])
+            if initiallyExists { await remote.seed(RemoteEntry(path: fixture.file, kind: .file, size: 3), on: device.id) }
+            let engine = DefaultRestoreEngine(repositoryStore: fixture.store, remote: remote)
+            let plan = try await engine.planRestore(RestoreRequest(repository: fixture.repository.id, point: fixture.point.id,
+                selectedRoots: [fixture.file], target: .originalPhonePaths, phoneConflictPolicy: .replaceFiles))
+            await remote.seed(RemoteEntry(path: fixture.file, kind: .file, size: 99), on: device.id)
+            do {
+                _ = try await engine.startRestore(plan.id, replacing: Set(plan.conflicts.map(\.id)))
+                XCTFail("A destination changed since review")
+            } catch let error as EngineError {
+                guard case .destinationConflict = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+            let publications = await remote.recordedPublications()
+            XCTAssertTrue(publications.isEmpty)
+        }
+    }
+
+    func testPhonePreflightInspectsSharedAncestorsOnceAndRechecksFreshBeforeWriting() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let device = AndroidDevice(id: fixture.repository.deviceID, state: .device)
+        let remote = FakeDeviceTransport(devices: [device])
+        await remote.seed(RemoteEntry(path: fixture.base, kind: .directory), on: device.id)
+        let saved = try await fixture.store.entries(in: fixture.repository.id, point: fixture.point.id, below: nil)
+        let source = try XCTUnwrap(saved.first { $0.path == fixture.file })
+        let entries = try (0..<100).map { index in
+            BackupEntry(path: try fixture.base.appending("file-\(index).jpg"), kind: .file, size: source.size,
+                        modifiedAt: nil, contentHash: source.contentHash)
+        }
+        let point = try await fixture.store.publish(RestorePointManifest(selection: BackupSelection(scope: .selected([fixture.base])), entries: entries), in: fixture.repository.id)
+        let engine = DefaultRestoreEngine(repositoryStore: fixture.store, remote: remote)
+        let progress = ProgressRecorder()
+        let plan = try await engine.planRestore(RestoreRequest(repository: fixture.repository.id, point: point.id,
+            selectedRoots: [fixture.base], target: .originalPhonePaths)) { await progress.append($0) }
+        let batches = await remote.recordedDestinationBatches()
+        XCTAssertEqual(batches.count, 2)
+        XCTAssertEqual(batches.flatMap { $0 }.count, 101)
+        XCTAssertEqual(Set(batches.flatMap { $0 }).count, 101)
+        let updates = await progress.values
+        XCTAssertEqual(updates.first?.totalItems, 1, "Identical content is verified once")
+        await remote.seed(RemoteEntry(path: entries[0].path, kind: .file, size: 100), on: device.id)
+        do {
+            _ = try await engine.startRestore(plan.id)
+            XCTFail("Fresh preflight must notice the new file")
+        } catch let error as EngineError {
+            guard case .destinationConflict = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+        let rechecked = await remote.recordedDestinationBatches()
+        XCTAssertEqual(rechecked.count, 4)
+        let publications = await remote.recordedPublications()
+        XCTAssertTrue(publications.isEmpty)
+    }
+
+    func testPhonePreflightDoesNotInspectBelowMissingOrUnsafeAncestors() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let device = AndroidDevice(id: fixture.repository.deviceID, state: .device)
+        for unsafe in [false, true] {
+            let remote = FakeDeviceTransport(devices: [device])
+            if unsafe { await remote.seed(RemoteEntry(path: fixture.base, kind: .symbolicLink), on: device.id) }
+            let engine = DefaultRestoreEngine(repositoryStore: fixture.store, remote: remote)
+            do {
+                _ = try await engine.planRestore(RestoreRequest(repository: fixture.repository.id, point: fixture.point.id,
+                    selectedRoots: [fixture.file], target: .originalPhonePaths))
+                XCTAssertFalse(unsafe, "Symlink ancestor must block planning")
+            } catch let error as EngineError {
+                guard unsafe, case .destinationConflict = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+            let inspected = await remote.recordedDestinationBatches().flatMap { $0 }
+            XCTAssertEqual(inspected, [fixture.base])
+        }
     }
 
     private func makeFixture() async throws -> (root: URL, store: FakeBackupRepositoryStore,
@@ -359,4 +495,9 @@ final class RestoreEngineTests: XCTestCase {
         for await event in stream { result.append(event) }
         return result
     }
+}
+
+private actor ProgressRecorder {
+    var values: [RestorePlanningProgress] = []
+    func append(_ value: RestorePlanningProgress) { values.append(value) }
 }

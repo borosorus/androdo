@@ -4,6 +4,7 @@ import SwiftUI
 struct LocalExportReviewSheet: View {
     @Environment(AppModel.self) private var model
     @State private var approvedConflicts: Set<UUID> = []
+    var backToSetup: (() -> Void)? = nil
 
     var body: some View {
         ReviewSheetLayout(title: model.restorePlanTitle,
@@ -19,13 +20,19 @@ struct LocalExportReviewSheet: View {
                         row("Folders", "\(plan.directoryCount)")
                         row("Total data", UIFormatting.bytes(plan.totalBytes))
                         row("Destination", plan.mappings.first.map { UIFormatting.destination($0.destination) } ?? "Unavailable")
+                        if model.restoreTargetIsPhone {
+                            row("If a file exists", isBatchReplacement ? "Replace files in this restore" : "Stop if a file exists")
+                            row(isBatchReplacement ? "Files to replace" : "Existing files", "\(plan.conflicts.filter { $0.replaceable && $0.observedIdentity != RestoreConflict.approvedMissingTargetIdentity }.count)")
+                        }
                     }
                     .padding(14)
                     .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
                     if !plan.sourceOmissions.isEmpty {
                         MessageBanner(text: "The selected restore point records \(plan.sourceOmissions.count) omitted path(s).", symbol: "exclamationmark.triangle", isWarning: true)
                     }
-                    if !plan.conflicts.isEmpty {
+                    if model.restoreTargetIsPhone {
+                        phoneConflictSummary(plan)
+                    } else if !plan.conflicts.isEmpty {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Destination conflicts").font(.headline)
                             Text("Existing items stay untouched unless you approve replacing them below.")
@@ -69,11 +76,14 @@ struct LocalExportReviewSheet: View {
                 }
             }
         } footer: {
+            if let backToSetup {
+                Button("Back") { backToSetup() }.disabled(model.isStartingOperation)
+            }
             Button("Cancel") { model.cancelExportReview() }
                 .keyboardShortcut(.cancelAction)
                 .disabled(model.isStartingOperation)
             Button {
-                Task { await model.startRestore(replacing: approvedConflicts) }
+                Task { await model.startRestore(replacing: replacementApprovals) }
             } label: {
                 if model.isStartingOperation { ProgressView().controlSize(.small); Text("Starting…") }
                 else { Text(model.restoreTargetIsPhone ? "Restore to Phone" : "Export") }
@@ -89,7 +99,35 @@ struct LocalExportReviewSheet: View {
     private var canExport: Bool {
         guard let plan = model.restorePlan, !plan.mappings.isEmpty,
               !plan.conflicts.contains(where: { !$0.replaceable }) else { return false }
+        if model.restoreTargetIsPhone { return isBatchReplacement || plan.conflicts.isEmpty }
         return plan.conflicts.filter(\.replaceable).allSatisfy { approvedConflicts.contains($0.id) }
+    }
+
+    private var isBatchReplacement: Bool {
+        model.restoreTargetIsPhone && model.restorePlan?.request.phoneConflictPolicy == .replaceFiles
+    }
+
+    private var replacementApprovals: Set<UUID> {
+        guard let plan = model.restorePlan, isBatchReplacement else { return approvedConflicts }
+        return Set(plan.conflicts.filter(\.replaceable).map(\.id))
+    }
+
+    @ViewBuilder
+    private func phoneConflictSummary(_ plan: RestorePlan) -> some View {
+        let blocked = plan.conflicts.filter { !$0.replaceable || !isBatchReplacement }
+        if !blocked.isEmpty {
+            MessageBanner(text: "\(blocked.count) destination conflict(s) block this restore. Go back to change the destination or conflict policy. Folders and unsafe paths cannot be replaced.",
+                          symbol: "hand.raised", isWarning: true)
+            DisclosureGroup("Blocked destinations (\(blocked.count))") {
+                ForEach(blocked.prefix(20)) { conflict in
+                    Text(UIFormatting.destination(conflict.destination)).font(.callout).textSelection(.enabled)
+                }
+                if blocked.count > 20 { Text("and \(blocked.count - 20) more").font(.caption) }
+            }
+        } else if isBatchReplacement {
+            Text("Restore to Phone confirms replacement for this entire batch. Files that change after review will stop the restore.")
+                .font(.callout).foregroundStyle(.secondary)
+        }
     }
 
     private func row(_ label: String, _ value: String) -> some View {

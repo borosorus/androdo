@@ -31,6 +31,12 @@ public actor DefaultRestoreEngine: RestoreEngine {
     }
 
     public func planRestore(_ request: RestoreRequest) async throws -> RestorePlan {
+        try await planRestore(request, progress: { _ in })
+    }
+
+    public func planRestore(_ request: RestoreRequest,
+                            progress: @Sendable @escaping (RestorePlanningProgress) async -> Void) async throws -> RestorePlan {
+        try Task.checkCancellation()
         guard !request.selectedRoots.isEmpty else { throw EngineError.emptySelection }
         let restorePoints = try await repositoryStore.restorePoints(in: request.repository)
         guard let point = restorePoints.first(where: { $0.id == request.point }),
@@ -44,10 +50,18 @@ public actor DefaultRestoreEngine: RestoreEngine {
         }.sorted { RemotePath.bytewiseLess($0.path, $1.path) }
         guard !selected.isEmpty else { throw EngineError.emptySelection }
         try Self.validateEntries(selected)
+        var references: [ContentObjectReference] = []
+        var seen: Set<ContentObjectReference> = []
         for entry in selected where entry.kind == .file {
             guard let hash = entry.contentHash else { throw EngineError.corruptedRepository("File entry has no object hash") }
-            try await repositoryStore.verifyObject(ContentObjectReference(sha256: hash, size: entry.size),
-                                                   in: request.repository)
+            let reference = ContentObjectReference(sha256: hash, size: entry.size)
+            if seen.insert(reference).inserted { references.append(reference) }
+        }
+        await progress(RestorePlanningProgress(stage: .verifyingBackup, completedItems: 0, totalItems: references.count))
+        for (index, reference) in references.enumerated() {
+            try Task.checkCancellation()
+            try await repositoryStore.verifyObject(reference, in: request.repository)
+            await progress(RestorePlanningProgress(stage: .verifyingBackup, completedItems: index + 1, totalItems: references.count))
         }
 
         let base: RemotePath
@@ -102,13 +116,15 @@ public actor DefaultRestoreEngine: RestoreEngine {
             guard let destinationRoot = resolvedLocalRoot, let localRootIdentity else {
                 throw EngineError.repositoryIO("Local restore folder was not captured")
             }
-            guard request.replaceMissingPhoneTargets.isEmpty else {
-                throw EngineError.transport("Missing phone replacement approvals apply only to Android destinations")
+            guard request.phoneConflictPolicy == .stopIfFileExists else {
+                throw EngineError.transport("Phone replacement policies apply only to Android destinations")
             }
             let repositories = try await repositoryStore.repositories()
             try Self.requireOutsideRepository(destinationRoot, repositories: repositories)
             var aliases: [String: (raw: Data, mapping: RestoreMapping)] = [:]
-            for mapping in mappings {
+            await progress(RestorePlanningProgress(stage: .checkingDestinations, completedItems: 0, totalItems: mappings.count))
+            for (index, mapping) in mappings.enumerated() {
+                try Task.checkCancellation()
                 guard case .local(let url) = mapping.destination else { continue }
                 try Self.requireOutsideRepository(url.standardizedFileURL.resolvingSymlinksInPath(),
                                                   repositories: repositories)
@@ -133,22 +149,18 @@ public actor DefaultRestoreEngine: RestoreEngine {
                                                              expectedRootIdentity: localRootIdentity)
                 conflicts.append(contentsOf: Self.localConflicts(state, destination: mapping.destination,
                                                                  sourceKind: mapping.source.kind))
+                await progress(RestorePlanningProgress(stage: .checkingDestinations, completedItems: index + 1, totalItems: mappings.count))
             }
         } else {
             guard let remote else { throw EngineError.transport("Android restore is unavailable without a connected-device transport") }
-            let fileDestinations = Set(mappings.filter { $0.source.kind == .file }.compactMap { mapping -> RemotePath? in
-                if case .phone(let path) = mapping.destination { path } else { nil }
-            })
-            guard request.replaceMissingPhoneTargets.isSubset(of: fileDestinations) else {
-                throw EngineError.transport("Replacement approval names a path outside the selected restore files")
-            }
+            let states = try await phoneSnapshot(mappings, device: info.deviceID, remote: remote, progress: progress)
             for mapping in mappings {
                 guard case .phone(let destination) = mapping.destination else { continue }
-                let itemConflicts = try await phoneConflicts(for: mapping, destination: destination,
-                                                             device: info.deviceID, remote: remote)
+                guard let state = states[destination] else { throw EngineError.transport("Missing destination metadata") }
+                let itemConflicts = Self.phoneConflicts(state, destination: mapping.destination, sourceKind: mapping.source.kind)
                 conflicts.append(contentsOf: itemConflicts)
                 if itemConflicts.isEmpty, mapping.source.kind == .file,
-                   request.replaceMissingPhoneTargets.contains(destination) {
+                   request.phoneConflictPolicy == .replaceFiles {
                     conflicts.append(RestoreConflict(destination: mapping.destination, kind: .fileExists,
                                                      observedIdentity: RestoreConflict.approvedMissingTargetIdentity,
                                                      replaceable: true))
@@ -165,6 +177,7 @@ public actor DefaultRestoreEngine: RestoreEngine {
                                totalBytes: totalBytes, fileCount: selected.filter { $0.kind == .file }.count,
                                directoryCount: selected.filter { $0.kind == .directory }.count,
                                sourceOmissions: point.omissions)
+        try Task.checkCancellation()
         requests[plan.id] = RequestRecord(request: request, mappings: mappings, conflicts: plan.conflicts,
                                           chosenLocalRoot: chosenLocalRoot, resolvedLocalRoot: resolvedLocalRoot,
                                           localRootIdentity: localRootIdentity)
@@ -179,6 +192,13 @@ public actor DefaultRestoreEngine: RestoreEngine {
             throw EngineError.repositoryBusy(try await repositoryInfo(record.request.repository).location)
         }
         do {
+            switch record.request.target {
+            case .localFolder: break
+            case .originalPhonePaths, .phoneFolder:
+                if record.request.phoneConflictPolicy == .stopIfFileExists, let conflict = record.conflicts.first {
+                    throw Self.conflictError(conflict.destination, conflict.kind)
+                }
+            }
             for conflict in record.conflicts {
                 guard conflict.replaceable, conflictsToReplace.contains(conflict.id) else {
                     throw EngineError.destinationConflict(TransferConflict(destination: Self.destinationDescription(conflict.destination),
@@ -224,7 +244,7 @@ public actor DefaultRestoreEngine: RestoreEngine {
         var completedBytes: Int64 = 0
         let totalItems = record.mappings.count
         let batchTotalBytes = Self.totalBytes(record.mappings)
-        let expectedByPath = Dictionary(uniqueKeysWithValues: record.conflicts.map { ($0.destination, $0) })
+        let expectedByPath = Dictionary(record.conflicts.map { ($0.destination, $0) }, uniquingKeysWith: { first, _ in first })
         let replacementIDs = Set(record.conflicts.filter { conflictIDs.contains($0.id) }.map(\.id))
         let info: BackupRepositoryInfo
         do { info = try await repositoryInfo(record.request.repository) }
@@ -350,7 +370,15 @@ public actor DefaultRestoreEngine: RestoreEngine {
 
     private func recheckPlan(_ record: RequestRecord, replacing approved: Set<UUID>) async throws {
         let info = try await repositoryInfo(record.request.repository)
+        let expectedByPath = Dictionary(record.conflicts.map { ($0.destination, $0) }, uniquingKeysWith: { first, _ in first })
+        let states: [RemotePath: RemoteDestinationState]
+        if case .localFolder = record.request.target { states = [:] }
+        else {
+            guard let remote else { throw EngineError.transport("Android restore transport is unavailable") }
+            states = try await phoneSnapshot(record.mappings, device: info.deviceID, remote: remote, progress: { _ in })
+        }
         for mapping in record.mappings {
+            try Task.checkCancellation()
             switch mapping.destination {
             case .local(let destination):
                 guard let chosenRoot = record.chosenLocalRoot, let root = record.resolvedLocalRoot,
@@ -362,40 +390,54 @@ public actor DefaultRestoreEngine: RestoreEngine {
                 let state = try LocalFilePublication.inspect(root: root, components: Self.components(of: destination, relativeTo: root),
                                                              expectedRootIdentity: rootIdentity)
                 try Self.compare(state, destination: mapping.destination, sourceKind: mapping.source.kind,
-                                 conflict: record.conflicts.first(where: { $0.destination == mapping.destination }),
+                                 conflict: expectedByPath[mapping.destination],
                                  approved: approved)
             case .phone(let destination):
-                guard let remote else { throw EngineError.transport("Android restore transport is unavailable") }
-                try await validatePhoneAncestors(destination, device: info.deviceID, remote: remote)
-                let state = try await remote.inspectDestination(destination, on: info.deviceID)
+                guard let state = states[destination] else { throw EngineError.transport("Missing destination metadata") }
                 try Self.compare(state, destination: mapping.destination, sourceKind: mapping.source.kind,
-                                 conflict: record.conflicts.first(where: { $0.destination == mapping.destination }),
+                                 conflict: expectedByPath[mapping.destination],
                                  approved: approved)
             }
         }
     }
 
-    private func phoneConflicts(for mapping: RestoreMapping, destination: RemotePath, device: DeviceID,
-                                remote: any RemoteDestinationAccess) async throws -> [RestoreConflict] {
-        try await validatePhoneAncestors(destination, device: device, remote: remote)
-        let state = try await remote.inspectDestination(destination, on: device)
-        return Self.phoneConflicts(state, destination: mapping.destination, sourceKind: mapping.source.kind)
-    }
-
-    private func validatePhoneAncestors(_ destination: RemotePath, device: DeviceID,
-                                        remote: any RemoteDestinationAccess) async throws {
-        var current = RemotePath.root
-        for (index, component) in destination.components.enumerated() {
-            current = try current.appending(component)
-            if index == 0 && component == "sdcard" { continue } // Android's conventional /sdcard alias is intentional.
-            if current == destination { break }
-            switch try await remote.inspectDestination(current, on: device) {
-            case .missing: return
-            case .directory: continue
-            case .regularFile, .symbolicLink, .other:
-                throw EngineError.destinationConflict(TransferConflict(destination: current.description, kind: .unsafePath))
+    /// A fresh, depth-ordered snapshot per preflight. Never descends through unsafe ancestors.
+    private func phoneSnapshot(_ mappings: [RestoreMapping], device: DeviceID,
+                               remote: any RemoteDestinationAccess,
+                               progress: @Sendable (RestorePlanningProgress) async -> Void) async throws -> [RemotePath: RemoteDestinationState] {
+        var paths: Set<RemotePath> = []
+        for mapping in mappings {
+            guard case .phone(let destination) = mapping.destination else { continue }
+            paths.insert(destination)
+            var parent = destination.parent
+            while let path = parent, path != .root {
+                if path.components != ["sdcard"] { paths.insert(path) }
+                parent = path.parent
             }
         }
+        var states: [RemotePath: RemoteDestinationState] = [:]
+        let levels = Dictionary(grouping: paths, by: { $0.components.count })
+        await progress(RestorePlanningProgress(stage: .checkingDestinations, completedItems: 0, totalItems: paths.count))
+        for depth in levels.keys.sorted() {
+            try Task.checkCancellation()
+            var inspect: [RemotePath] = []
+            for path in levels[depth]!.sorted(by: RemotePath.bytewiseLess) {
+                if let parent = path.parent, let state = states[parent] {
+                    switch state {
+                    case .missing: states[path] = .missing; continue
+                    case .directory: break
+                    case .regularFile, .symbolicLink, .other:
+                        throw EngineError.destinationConflict(TransferConflict(destination: parent.description, kind: .unsafePath))
+                    }
+                }
+                inspect.append(path)
+            }
+            let observed = try await remote.inspectDestinations(inspect, on: device)
+            guard Set(observed.keys) == Set(inspect) else { throw EngineError.transport("Incomplete destination metadata") }
+            states.merge(observed, uniquingKeysWith: { _, new in new })
+            await progress(RestorePlanningProgress(stage: .checkingDestinations, completedItems: states.count, totalItems: paths.count))
+        }
+        return states
     }
 
     private func ensurePhoneDirectories(for destination: RemotePath, device: DeviceID,

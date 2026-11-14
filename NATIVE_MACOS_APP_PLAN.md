@@ -37,6 +37,7 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 - [x] Step 8.8 — Simplify current-phone backup scope selection. Commit: `feat(backups): simplify phone backup scope selection`. Review: approved after immutable phone/session capture.
 - [x] Step 8.9 — Separate saved backups from live phone files and make Recent Operations secondary. Commit: `refactor(ui): distinguish saved backups from live phone files`. Review: approved.
 - [x] Step 8.10 — Stabilize connected-device refresh, expose Settings and rename File Explorer. Commit: `fix(ui): stabilize sidebar controls and expose settings`. Review: approved.
+- [x] Step 8.11 — Plan phone restores with progress, explicit conflict handling and one batch review. Commit: `fix(restore): plan and approve phone restores as a batch`. Review: approved after policy, lookup and sheet-lifecycle fixes.
 - [ ] Step 9 — Complete packaging, CI, and end-to-end acceptance. Local packaging and CI committed as `build(macOS): package app and add acceptance checks`; reviewer approved. Phone acceptance remains pending an explicitly selected disposable folder.
 
 ## Steps
@@ -243,6 +244,8 @@ The Python CLI remains as reference code. No Python runtime or backup-format com
 **Privacy:** Fixtures only; no phone folders, user repositories, or standard preferences. Step 9 real-device acceptance remains open.
 
 **8.10 complete:** Device refresh now sits beside its label in a regular sidebar row with a fixed hit target and trailing space. Settings is a full-width native footer button and remains available before ADB setup. Sidebar and navigation title use File Explorer. Reviewer approved; compact native light/dark fixtures inspected, Swift suite passed (77 core + 49 UI-model), and whitespace/shell checks passed.
+
+**8.11 complete:** Restore setup requires an explicit stop-or-replace choice before checking destinations, reports verification/destination progress, supports cancellation and retains a single batch review in its owning sheet. Replacement captures existing identities and missing-file approvals for the entire selection; strict mode is enforced by the engine. Unsupported no-overwrite publication preserves the failed/incomplete result and explains the next choice without restarting the batch. Destination metadata is queried in bounded, safely quoted/NUL-framed batches by depth, shared ancestors and content verification are deduplicated, and start uses a fresh snapshot with keyed conflict lookups. Publication-time identity/ancestor checks remain in place. Reviewer approved after fixing dismissal cleanup, strict-policy bypass and quadratic lookups. Native rendering caught transparent Group lifecycle cleanup clearing the review; a stable container fixes it, and the fictional capture now fails if the prepared batch disappears. All 126 Swift tests passed (77 core + 49 UI-model); compact light/dark sidebar and populated restore-review captures plus restore setup inspected. Whitespace and shell syntax checks passed. Real-device latency and interactive phone restore remain user acceptance work; no phone folders or personal backups were accessed.
 
 ### Step 9 — Packaging and end-to-end acceptance
 

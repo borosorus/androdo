@@ -38,7 +38,7 @@ struct OperationStatusView: View {
                     }
                 }
                 if let failure = event.failure {
-                    MessageBanner(text: UserFacingError.message(for: failure), symbol: "exclamationmark.triangle", isWarning: true)
+                    MessageBanner(text: failureMessage(failure), symbol: "exclamationmark.triangle", isWarning: true)
                 }
             }
             if let event = model.operationEvent, !event.warnings.isEmpty {
@@ -70,6 +70,13 @@ struct OperationStatusView: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func failureMessage(_ error: EngineError) -> String {
+        if model.operationKind == .restore, case .safeNoOverwriteUnavailable(let path) = error {
+            return "Android cannot create \(path.description) with safe no-overwrite publication. To continue, start a new restore and choose “Replace files in this restore”. Review the batch before confirming."
+        }
+        return UserFacingError.message(for: error)
     }
 
     private var recoveryContent: some View {

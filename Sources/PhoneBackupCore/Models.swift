@@ -423,21 +423,39 @@ public enum RestoreDestination: Hashable, Sendable {
     case phone(RemotePath)
 }
 
+public enum PhoneRestoreConflictPolicy: String, CaseIterable, Sendable {
+    /// Requires atomic no-overwrite publication; unsupported Android filesystems fail clearly.
+    case stopIfFileExists
+    /// Authorizes replacement publication only for exact files captured and approved in this plan.
+    case replaceFiles
+}
+
+public struct RestorePlanningProgress: Sendable {
+    public enum Stage: Sendable { case verifyingBackup, checkingDestinations }
+    public let stage: Stage
+    public let completedItems: Int
+    public let totalItems: Int
+
+    public init(stage: Stage, completedItems: Int, totalItems: Int) {
+        self.stage = stage
+        self.completedItems = completedItems
+        self.totalItems = totalItems
+    }
+}
+
 public struct RestoreRequest: Sendable {
     public let repository: RepositoryID
     public let point: RestorePointID
     public let selectedRoots: [RemotePath]
     public let target: RestoreTarget
-    /// Exact remote file paths that a newly reviewed plan may publish with explicit replacement semantics.
-    public let replaceMissingPhoneTargets: Set<RemotePath>
-
+    public let phoneConflictPolicy: PhoneRestoreConflictPolicy
     public init(repository: RepositoryID, point: RestorePointID, selectedRoots: [RemotePath], target: RestoreTarget,
-                replaceMissingPhoneTargets: Set<RemotePath> = []) {
+                phoneConflictPolicy: PhoneRestoreConflictPolicy = .stopIfFileExists) {
         self.repository = repository
         self.point = point
         self.selectedRoots = Array(Set(selectedRoots)).sorted(by: RemotePath.bytewiseLess)
         self.target = target
-        self.replaceMissingPhoneTargets = replaceMissingPhoneTargets
+        self.phoneConflictPolicy = phoneConflictPolicy
     }
 }
 

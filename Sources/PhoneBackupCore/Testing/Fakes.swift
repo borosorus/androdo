@@ -19,6 +19,10 @@ private struct FakePullMutation {
 }
 
 public actor FakeDeviceTransport: DeviceTransport, RemoteDestinationAccess {
+    public struct Publication: Sendable {
+        public let path: RemotePath
+        public let replacing: String?
+    }
     private var devices: [AndroidDevice]
     private var entries: [DeviceID: [RemoteEntry]] = [:]
     private var fileData: [DeviceID: [RemotePath: Data]] = [:]
@@ -29,6 +33,9 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteDestinationAccess {
     private var publicationFailuresWithoutEngineError: Set<RemotePath> = []
     private var pullCalls: [DeviceID: [RemotePath]] = [:]
     private var childrenCalls: [DeviceID: [RemotePath]] = [:]
+    private var destinationBatches: [[RemotePath]] = []
+    private var publications: [Publication] = []
+    private var supportsNoOverwritePublication = true
 
     public init(devices: [AndroidDevice] = []) {
         self.devices = devices
@@ -80,6 +87,9 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteDestinationAccess {
 
     public func recordedPulls(on device: DeviceID) -> [RemotePath] { pullCalls[device, default: []] }
     public func recordedChildrenCalls(on device: DeviceID) -> [RemotePath] { childrenCalls[device, default: []] }
+    public func recordedDestinationBatches() -> [[RemotePath]] { destinationBatches }
+    public func recordedPublications() -> [Publication] { publications }
+    public func setSupportsNoOverwritePublication(_ supported: Bool) { supportsNoOverwritePublication = supported }
 
     public func connectedDevices() async throws -> [AndroidDevice] {
         devices
@@ -106,6 +116,13 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteDestinationAccess {
             throw EngineError.missingPath(path)
         }
         return entry
+    }
+
+    public func inspectDestinations(_ paths: [RemotePath], on device: DeviceID) async throws -> [RemotePath: RemoteDestinationState] {
+        destinationBatches.append(paths)
+        var states: [RemotePath: RemoteDestinationState] = [:]
+        for path in paths { states[path] = try await inspectDestination(path, on: device) }
+        return states
     }
 
     public func inspectDestination(_ path: RemotePath, on device: DeviceID) async throws -> RemoteDestinationState {
@@ -147,6 +164,8 @@ public actor FakeDeviceTransport: DeviceTransport, RemoteDestinationAccess {
         case .symbolicLink, .other:
             throw EngineError.destinationConflict(TransferConflict(destination: path.description, kind: .unsafePath))
         }
+        publications.append(Publication(path: path, replacing: identity))
+        if identity == nil, !supportsNoOverwritePublication { throw EngineError.safeNoOverwriteUnavailable(path) }
         let data = try Data(contentsOf: localURL)
         let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         guard Int64(data.count) == expected.size, digest == expected.sha256 else {

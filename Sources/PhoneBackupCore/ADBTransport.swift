@@ -296,23 +296,67 @@ public actor ADBTransport: DeviceTransport, RemoteDestinationAccess {
     }
 
     public func inspectDestination(_ path: RemotePath, on device: DeviceID) async throws -> RemoteDestinationState {
-        let quoted = Self.shellQuote(path.description)
-        let identity = "$(stat -c '%d:%i:%s:%y' \(quoted) 2>/dev/null)"
-        let remote = "if [ -L \(quoted) ]; then printf 'L|%s' \(identity); elif [ -f \(quoted) ]; then printf 'F|%s' \(identity); elif [ -d \(quoted) ]; then printf 'D|%s' \(identity); elif [ -e \(quoted) ]; then printf 'O|%s' \(identity); else printf 'M'; fi"
+        let remote = Self.destinationInspectionScript(for: Self.shellQuote(path.description))
         let output = try await command(["-s", device.serial, "shell", remote], path: path, device: device)
         let record = String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return try Self.destinationState(record)
+    }
+
+    /// Reads only the requested metadata, in bounded commands. Records never contain filenames.
+    public func inspectDestinations(_ paths: [RemotePath], on device: DeviceID) async throws -> [RemotePath: RemoteDestinationState] {
+        let paths = Array(Set(paths)).sorted(by: RemotePath.bytewiseLess)
+        var states: [RemotePath: RemoteDestinationState] = [:]
+        var offset = 0
+        while offset < paths.count {
+            try Task.checkCancellation()
+            var batch: [RemotePath] = []
+            var arguments: [String] = []
+            var byteCount = 0
+            while offset < paths.count, batch.count < 64 {
+                let quoted = Self.shellQuote(paths[offset].description)
+                guard quoted.utf8.count < 24_000 else { throw EngineError.invalidRemotePath("Destination path is too long") }
+                if !batch.isEmpty, byteCount + quoted.utf8.count + 1 > 24_000 { break }
+                batch.append(paths[offset])
+                arguments.append(quoted)
+                byteCount += quoted.utf8.count + 1
+                offset += 1
+            }
+            let script = "for p in \(arguments.joined(separator: " ")); do \(Self.destinationInspectionScript(for: "\"$p\"")); printf '\\000'; done"
+            let output = try await command(["-s", device.serial, "shell", script], path: batch[0], device: device)
+            var records = output.split(separator: 0, omittingEmptySubsequences: false)
+            guard records.last?.isEmpty == true, records.count == batch.count + 1 else {
+                throw EngineError.transport("ADB returned an incomplete destination batch")
+            }
+            records.removeLast()
+            for (path, bytes) in zip(batch, records) {
+                guard let record = String(bytes: bytes, encoding: .utf8) else {
+                    throw EngineError.transport("ADB returned invalid destination metadata")
+                }
+                states[path] = try Self.destinationState(record)
+            }
+        }
+        return states
+    }
+
+    private static func destinationInspectionScript(for quoted: String) -> String {
+        let identity = "\"$(stat -c '%d:%i:%s:%y' \(quoted) 2>/dev/null)\""
+        return "if [ -L \(quoted) ]; then printf 'L|%s' \(identity); elif [ -f \(quoted) ]; then printf 'F|%s' \(identity); elif [ -d \(quoted) ]; then printf 'D|%s' \(identity); elif [ -e \(quoted) ]; then printf 'O|%s' \(identity); else printf 'M'; fi"
+    }
+
+    private static func destinationState(_ record: String) throws -> RemoteDestinationState {
         if record == "M" { return .missing }
         let fields = record.split(separator: "|", maxSplits: 1).map(String.init)
         guard fields.count == 2 else { throw EngineError.transport("ADB returned invalid destination metadata") }
         let stats = fields[1].split(separator: ":", maxSplits: 3)
-        guard stats.count == 4, let size = Int64(stats[2]) else {
+        guard stats.count == 4, let size = Int64(stats[2]), size >= 0 else {
             throw EngineError.transport("ADB returned invalid destination identity")
         }
         switch fields[0] {
         case "F": return .regularFile(identity: fields[1], size: size)
         case "D": return .directory(identity: fields[1])
         case "L": return .symbolicLink(identity: fields[1])
-        default: return .other(identity: fields[1])
+        case "O": return .other(identity: fields[1])
+        default: throw EngineError.transport("ADB returned an unknown destination type")
         }
     }
 
